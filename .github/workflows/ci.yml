@@ -1,0 +1,87 @@
+name: macOS CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      artifact_id:
+        description: Immutable universal build artifact from this run
+        value: ${{ jobs.universal.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+jobs:
+  native:
+    name: Native macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      CI_EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install validation tools
+        run: brew install actionlint shellcheck jq
+      - name: Validate workflows, failure contracts, real LaunchAgents, and native build
+        run: ./scripts/ci.sh
+
+  universal:
+    name: Universal app and drag-and-drop installer
+    needs: native
+    runs-on: macos-15
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install packaging metadata prerequisite
+        run: brew install jq
+      - name: Build both architectures and verify mounted installer and copied app
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/package-macos.sh universal
+      - name: Store local test packages (ad-hoc signed, not notarized)
+        id: upload
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-macOS-universal-${{ github.sha }}
+          path: dist/packages/*-universal-local/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  ci-required:
+    name: ci-required
+    needs: [native, universal]
+    if: ${{ always() }}
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      NATIVE_RESULT: ${{ needs.native.result }}
+      PACKAGE_RESULT: ${{ needs.universal.result }}
+    steps:
+      - name: Require both native runners and universal packaging
+        run: |
+          [[ "$NATIVE_RESULT" == success && "$PACKAGE_RESULT" == success ]]

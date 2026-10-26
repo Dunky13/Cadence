@@ -1,0 +1,76 @@
+name: Production macOS release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialise all versions so two releases cannot race to become Latest.
+concurrency:
+  group: cadence-production-release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Verify version tag, main ancestry, and unused release version
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release identity before builds or Apple submissions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-release-tag.sh
+
+  distribution:
+    name: Test, build, sign, notarize, and verify universal installer
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/distribution.yml
+    with:
+      authorize_notarization: true
+      release_tag: ${{ github.ref_name }}
+
+  publish:
+    name: Verify uploaded bytes and publish production release
+    needs: distribution
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    environment:
+      name: production
+      url: ${{ steps.publish.outputs.release_url }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the immutable signed artifact ID
+        env:
+          ARTIFACT_ID: ${{ needs.distribution.outputs.artifact_id }}
+        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.distribution.outputs.artifact_id }}
+          path: ${{ runner.temp }}/cadence-production
+          merge-multiple: true
+      - name: Recheck production tag and release eligibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-release-tag.sh
+      - name: Create draft, upload and read back assets, then publish
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIRECTORY: ${{ runner.temp }}/cadence-production
+        run: ./scripts/publish-release.sh "$GITHUB_REF_NAME" "$RELEASE_DIRECTORY"
