@@ -21,9 +21,25 @@ case $kind in publication) expected_count=1 ;; checkpoint) expected_count=3 ;; b
 count=$(wc -l < "$work/members" | tr -d ' ')
 unique_count=$(LC_ALL=C sort -u "$work/members" | wc -l | tr -d ' ')
 [[ $count == "$expected_count" && $unique_count == "$count" ]] || fail 'Artifact members are missing or duplicated.'
+layout='' package_version=''
 while IFS= read -r member; do
-    [[ -n $member && $member != */* && $member != *$'\r'* ]] || fail 'Artifact must contain only flat regular files.'
-    case $kind:$member in
+    [[ -n $member && $member != *$'\r'* ]] || fail 'Unsafe artifact member.'
+    prefix='' name=$member
+    if [[ $member == */* ]]; then
+        # upload-artifact retains the directory after CI's first wildcard:
+        # dist/packages/*-universal-local/*. Permit only that single build root.
+        [[ $kind == build && $member =~ ^([0-9]+\.[0-9]+\.[0-9]+)-universal-local/([^/]+)$ ]] \
+            || fail 'Unexpected artifact directory.'
+        package_version=${BASH_REMATCH[1]}
+        prefix="$package_version-universal-local/" name=${member##*/}
+        case $name in
+            "Cadence-App-$package_version-universal-local.zip"|"Cadence-Installer-$package_version-universal-local.dmg"|build-manifest.json|SHA256SUMS) ;;
+            *) fail 'Build package directory and member version differ.' ;;
+        esac
+    fi
+    if [[ -z $layout ]]; then layout="${prefix:-flat}"; fi
+    [[ $layout == "${prefix:-flat}" ]] || fail 'Mixed artifact directories.'
+    case $kind:$name in
         publication:publication-receipts.json) ;;
         checkpoint:checkpoint.json|checkpoint:state.tar.gz|checkpoint:SHA256SUMS) ;;
         build:Cadence-App-*-universal-local.zip|build:Cadence-Installer-*-universal-local.dmg|build:build-manifest.json|build:SHA256SUMS) ;;
@@ -31,8 +47,14 @@ while IFS= read -r member; do
         *) fail 'Unexpected artifact member.' ;;
     esac
 done < "$work/members"
-mkdir -p "$destination"
-ditto -x -k "$work/artifact.zip" "$destination"
-for member in "$destination/"*; do
+ditto -x -k "$work/artifact.zip" "$work/extracted"
+payload="$work/extracted"
+if [[ $layout != flat ]]; then
+    payload="$payload/${layout%/}"
+    [[ -d $payload && ! -L $payload ]] || fail 'Build package directory is not regular.'
+fi
+for member in "$payload/"*; do
     [[ -f $member && ! -L $member ]] || fail 'Artifact contains a link or nonregular file.'
 done
+mkdir -p "$destination"
+mv "$payload/"* "$destination/"
