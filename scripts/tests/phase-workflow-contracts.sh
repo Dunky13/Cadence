@@ -158,4 +158,77 @@ for phase in "${phases[@]}"; do
 done
 for phase in app-wait installer-wait finish; do run_sequence "$phase" 75; done
 run_sequence finish 0
+
+# The same Bash 3.2 behavior also affects nonterminal guards around restoration
+# and promotion. Execute their exact YAML bodies and require rejection before
+# any download, checksum, restore, or move can use an invalid precondition.
+for name in 'Restore bound immutable state before credentials' 'Recover original CI input if preparation never produced submitted bytes' 'Promote only after credentials have been removed'; do
+    case $name in Restore*) id=restore ;; Recover*) id=recover ;; Promote*) id=promote ;; esac
+    extract_step "$name" "$work/steps/guard-$id.yml"
+    extract_body "$work/steps/guard-$id.yml" "$work/steps/guard-$id.sh"
+done
+mkdir "$work/guard-bin"
+cat > "$work/guard-bin/gh" <<'STUB'
+#!/bin/bash
+printf 'gh\n' >> "$GUARD_CALLS"
+printf '%s\n' "$BUILD_ARTIFACT_DIGEST"
+STUB
+cat > "$work/guard-bin/shasum" <<'STUB'
+#!/bin/bash
+printf 'shasum\n' >> "$GUARD_CALLS"
+exec /usr/bin/shasum "$@"
+STUB
+for name in download-release-artifact.sh verify-release-input.sh checkpoint-state.sh recover-unstarted-upload.sh; do
+    cat > "$work/repo/scripts/$name" <<'STUB'
+#!/bin/bash
+printf '%s\n' "${0##*/}" >> "$GUARD_CALLS"
+STUB
+    chmod +x "$work/repo/scripts/$name"
+done
+chmod +x "$work/guard-bin/"*
+guard_case() {
+    local kind=$1 expected=$2 condition=$3
+    new_case
+    local repo="$directory/repo"
+    mkdir -p "$repo/scripts" "$repo/dist" "$STATE_DIRECTORY/evidence"
+    cp "$work/repo/scripts/"{download-release-artifact.sh,verify-release-input.sh,checkpoint-state.sh,recover-unstarted-upload.sh} "$repo/scripts/"
+    export GUARD_CALLS="$directory/guard-calls" CHECKPOINT_ID=400
+    : > "$GUARD_CALLS"
+    if [[ $condition == invalid-id ]]; then CHECKPOINT_ID=invalid; fi
+    if [[ $condition == existing-receipt ]]; then printf 'synthetic receipt\n' > "$STATE_DIRECTORY/evidence/app-universal-receipt.json"; fi
+    if [[ $kind == promote ]]; then
+        mkdir -p "$directory/payload"
+        printf 'synthetic app\n' > "$directory/payload/app.zip"
+        printf 'synthetic installer\n' > "$directory/payload/installer.dmg"
+        jq -n --arg source "$SOURCE_COMMIT" '{schema:"cadence/distribution/v1",source_commit:$source,architecture:"universal",notarization:"Accepted",tickets:"stapled and validated",synthetic_fixture:true}' > "$directory/payload/distribution.json"
+        (cd "$directory/payload" && /usr/bin/shasum -a 256 app.zip installer.dmg distribution.json > SHA256SUMS)
+        if [[ $condition == linked-candidate ]]; then ln -s "$directory/payload" "$repo/dist/.signed-candidate";
+        else cp -R "$directory/payload" "$repo/dist/.signed-candidate"; fi
+        if [[ $condition == occupied-destination ]]; then mkdir "$repo/dist/release"; printf 'retain\n' > "$repo/dist/release/previous"; fi
+        if [[ $condition == dangling-destination ]]; then ln -s "$directory/missing" "$repo/dist/release"; fi
+    fi
+    result=0
+    (cd "$repo" && PATH="$work/guard-bin:$PATH" /bin/bash "$shell_option" "$work/steps/guard-$kind.sh") > "$directory/log" 2>&1 || result=$?
+    [[ $result == "$expected" ]] || fail "$kind guard ($shell_option/$condition) returned $result, expected $expected"
+    if [[ $expected != 0 ]]; then
+        [[ ! -s $GUARD_CALLS ]] || fail "$kind used invalid state before rejecting $condition"
+        if [[ $kind == promote ]]; then [[ -e $repo/dist/.signed-candidate || -L $repo/dist/.signed-candidate ]] || fail 'rejected promotion moved the source'; fi
+    elif [[ $kind == promote ]]; then
+        [[ -d $repo/dist/release && ! -L $repo/dist/release && ! -e $repo/dist/.signed-candidate ]] || fail 'valid promotion did not move once'
+    else
+        [[ -s $GUARD_CALLS ]] || fail "$kind did not execute valid recovery"
+    fi
+    if [[ $condition == occupied-destination ]]; then [[ $(cat "$repo/dist/release/previous") == retain ]] || fail 'old destination changed'; fi
+    if [[ $condition == dangling-destination ]]; then [[ -L $repo/dist/release && ! -e $directory/missing ]] || fail 'dangling destination changed'; fi
+}
+for shell_option in -e +e; do
+    guard_case restore 1 invalid-id
+    guard_case restore 0 valid
+    guard_case recover 1 existing-receipt
+    guard_case recover 0 valid
+    guard_case promote 1 linked-candidate
+    guard_case promote 1 occupied-destination
+    guard_case promote 1 dangling-destination
+    guard_case promote 0 valid
+done
 printf '%s phase workflow contracts passed (extracted YAML, /bin/bash, synthetic child only).\n' "$cases"
