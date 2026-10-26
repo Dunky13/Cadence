@@ -60,7 +60,7 @@ if [[ -n ${BUILD_NUMBER:-} ]]; then
     [[ $BUILD_NUMBER =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo 'BUILD_NUMBER must be numeric.' >&2; exit 1; }
     plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$app/Contents/Info.plist"
 fi
-swift scripts/make-icon.swift "$app/Contents/Resources/Cadence.icns"
+cp Resources/Cadence.icns "$app/Contents/Resources/Cadence.icns"
 plutil -lint "$app/Contents/Info.plist"
 chmod -R u+rwX,go+rX,go-w "$app"
 

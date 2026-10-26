@@ -5,14 +5,29 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-publication-tests.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
+cat > "$work/bin/plutil" <<'STUB'
+#!/bin/bash
+printf '1.2.3\n'
+STUB
 cat > "$work/bin/git" <<'STUB'
 #!/bin/bash
 set -euo pipefail
+commit=${SOURCE_COMMIT:-$GITHUB_SHA}
 case "$*" in
     'rev-parse --verify HEAD')
-        if [[ $PUBLICATION_MODE == wrong-checkout ]]; then printf '%040d\n' 1; else printf '%s\n' "$GITHUB_SHA"; fi ;;
+        if [[ $PUBLICATION_MODE == wrong-checkout ]]; then printf '%040d\n' 1; else printf '%s\n' "$commit"; fi ;;
     'rev-parse --verify refs/tags/v1.2.3^{commit}')
-        if [[ $PUBLICATION_MODE == wrong-local-tag ]]; then printf '%040d\n' 1; else printf '%s\n' "$GITHUB_SHA"; fi ;;
+        if [[ $PUBLICATION_MODE == wrong-local-tag ]]; then printf '%040d\n' 1; else printf '%s\n' "$commit"; fi ;;
+    'fetch --no-tags origin main') : ;;
+    'fetch --no-tags origin refs/tags/v1.2.3:refs/tags/v1.2.3') : ;;
+    'merge-base --is-ancestor '* ) [[ $PUBLICATION_MODE != off-main ]] ;;
+    'ls-remote origin refs/tags/v1.2.3 refs/tags/v1.2.3^{}')
+        if [[ $PUBLICATION_MODE == tag-lookup-error ]]; then exit 1; fi
+        if [[ $PUBLICATION_MODE == main-existing-tag || -e $PUBLICATION_STATE/tag-created ]]; then
+            printf '%s\trefs/tags/v1.2.3\n' "$commit"
+        elif [[ $PUBLICATION_MODE == wrong-remote-tag ]]; then
+            printf '%040d\trefs/tags/v1.2.3\n' 1
+        fi ;;
     *) printf 'Unexpected git command\n' >&2; exit 1 ;;
 esac
 STUB
@@ -20,6 +35,7 @@ cat > "$work/bin/gh" <<'STUB'
 #!/bin/bash
 set -euo pipefail
 state=$PUBLICATION_STATE mode=$PUBLICATION_MODE
+commit=${SOURCE_COMMIT:-$GITHUB_SHA}
 printf '%s\n' "$*" >> "$state/calls"
 record() { printf 'event:%s\n' "$1" >> "$state/calls"; }
 metadata() {
@@ -27,7 +43,7 @@ metadata() {
     [[ -e $state/published ]] && draft=false
     if [[ $mode == wrong-draft-state && ! -e $state/published ]]; then draft=false; fi
     if [[ $mode == wrong-public-state && -e $state/published ]]; then draft=true; fi
-    jq -n --arg source "$GITHUB_SHA" --argjson draft "$draft" '{id:42,tag_name:"v1.2.3",target_commitish:$source,
+    jq -n --arg source "$commit" --argjson draft "$draft" '{id:42,tag_name:"v1.2.3",target_commitish:$source,
         draft:$draft,prerelease:false,html_url:"https://github.com/fixture/Cadence/releases/tag/v1.2.3"}'
 }
 if [[ $1 == api ]]; then
@@ -41,6 +57,12 @@ if [[ $1 == api ]]; then
     done
     header() { if [[ $include == true ]]; then printf 'HTTP/2.0 %s\r\nContent-Type: application/json\r\n\r\n' "$1"; fi; }
     case "$endpoint" in
+        repos/fixture/Cadence/git/refs)
+            record tag-create
+            [[ $method == POST && -f $input_file && $mode != tag-create-failure ]] || exit 1
+            jq -e --arg sha "$commit" '.ref == "refs/tags/v1.2.3" and .sha == $sha' "$input_file" >/dev/null
+            touch "$state/tag-created"
+            jq -n --arg sha "$commit" '{ref:"refs/tags/v1.2.3",object:{type:"commit",sha:$sha}}' ;;
         'repos/fixture/Cadence/releases?per_page=100')
             [[ $mode != lookup-auth && $mode != lookup-network ]] || exit 1
             if [[ $mode == existing-release || $mode == existing-draft ]]; then
@@ -49,7 +71,7 @@ if [[ $1 == api ]]; then
         repos/fixture/Cadence/releases)
             record create
             [[ $method == POST && -f $input_file ]] || exit 1
-            jq -e '.tag_name == "v1.2.3" and .target_commitish == env.GITHUB_SHA and
+            jq -e --arg sha "$commit" '.tag_name == "v1.2.3" and .target_commitish == $sha and
                 .draft == true and .prerelease == false and .generate_release_notes == true' "$input_file" >/dev/null || exit 1
             touch "$state/created"
             mkdir "$state/assets"
@@ -59,12 +81,12 @@ if [[ $1 == api ]]; then
             [[ ! -f $state/tag-count ]] || read -r count < "$state/tag-count"
             count=$((count + 1))
             printf '%s\n' "$count" > "$state/tag-count"
-            sha=$GITHUB_SHA type=commit
+            sha=$commit type=commit
             if [[ $mode == annotated ]]; then sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; type=tag; fi
             if [[ $mode == wrong-remote-tag || ( $mode == moved-tag-before-publish && $count -eq 2 ) || ( $mode == moved-tag-after-publish && $count -eq 3 ) ]]; then sha=cccccccccccccccccccccccccccccccccccccccc; fi
             jq -n --arg sha "$sha" --arg type "$type" '{ref:"refs/tags/v1.2.3",object:{sha:$sha,type:$type}}' ;;
         repos/fixture/Cadence/git/tags/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
-            jq -n --arg sha "$GITHUB_SHA" '{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",object:{sha:$sha,type:"commit"}}' ;;
+            jq -n --arg sha "$commit" '{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",object:{sha:$sha,type:"commit"}}' ;;
         repos/fixture/Cadence/releases/tags/v1.2.3)
             if [[ -e $state/published || $mode == existing-release ]]; then header '200 OK'; metadata
             elif [[ $mode == lookup-auth ]]; then header '403 Forbidden'; printf '{"message":"Forbidden"}\n'; exit 1
@@ -144,13 +166,15 @@ invoke() {
     env PATH="$work/bin:$PATH" TMPDIR="$state/tmp" PUBLICATION_STATE="$state" PUBLICATION_MODE="$mode" \
         GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=fixture/Cadence GH_TOKEN=synthetic \
         GH_HOST=github.com GITHUB_STEP_SUMMARY="$state/summary" GITHUB_OUTPUT="$state/outputs" \
+        SOURCE_COMMIT='' RELEASE_TAG='' "$@" \
         /bin/bash "$root/scripts/publish-release.sh" v1.2.3 "$input" > "$state/output" 2>&1 || result=$?
     [[ -z $(ls -A "$state/tmp") ]] || fail 'private temporary files leaked'
 }
 reject_before_create() {
-    invoke
+    invoke "$@"
     [[ $result != 0 ]] || fail 'unsafe input was accepted'
     ! grep -qx event:create "$state/calls" || fail 'draft creation reached after a failed preflight'
+    [[ ! -e $state/tag-created ]] || fail 'tag created after a failed preflight'
     cases=$((cases + 1))
 }
 reject_before_publish() {
@@ -216,4 +240,27 @@ for mode in wrong-public-state corrupt-public-download extra-public-asset moved-
     [[ ! -s $state/summary ]] || fail 'success claimed despite failed public readback'
     cases=$((cases + 1))
 done
+main_context=(GITHUB_REF_TYPE=branch GITHUB_REF=refs/heads/main GITHUB_REF_NAME=main
+    SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa RELEASE_TAG=v1.2.3)
+for mode in main-without-tag main-existing-tag; do
+    new_case "$mode"
+    invoke "${main_context[@]}" GITHUB_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    [[ $result == 0 && -e $state/published ]] || fail 'latest-main release rejected'
+    if [[ $mode == main-without-tag ]]; then
+        [[ -e $state/tag-created ]] || fail 'missing tag was not created'
+        [[ $(grep -c '^event:tag-create$' "$state/calls") == 1 ]] || fail 'tag creation was retried'
+    else
+        [[ ! -e $state/tag-created ]] || fail 'existing tag was replaced'
+    fi
+    cases=$((cases + 1))
+done
+for mode in off-main tag-lookup-error tag-create-failure wrong-remote-tag existing-release latest-newer; do
+    new_case "main-$mode" "$mode"
+    reject_before_create "${main_context[@]}"
+done
+new_case main-corrupt-payload main-without-tag
+printf 'corrupt\n' >> "$input/Cadence-App-1.2.3-universal.zip"
+reject_before_create "${main_context[@]}"
+new_case main-tag-mismatch main-without-tag
+reject_before_create "${main_context[@]}" RELEASE_TAG=v9.9.9
 printf 'Publication contracts: %s cases passed; no provider calls or publication.\n' "$cases"

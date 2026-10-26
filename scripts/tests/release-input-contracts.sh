@@ -48,12 +48,12 @@ new_case() {
 checksums() { (cd "$input" && shasum -a 256 "$archive" "$image" build-manifest.json > SHA256SUMS); }
 invoke() {
     result=0
-    env PATH="$work/bin:$PATH" HANDOFF_CALLS="$calls" GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    env PATH="$work/bin:$PATH" HANDOFF_CALLS="$calls" GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa SOURCE_COMMIT='' "$@" \
         /bin/bash "$root/scripts/verify-release-input.sh" "$input" "$destination" \
         > "$work/$case_name/output" 2>&1 || result=$?
 }
 reject() {
-    invoke
+    invoke "$@"
     [[ $result != 0 ]] || fail 'bad handoff was accepted'
     [[ ! -s $calls ]] || fail 'extraction or signing was reached before handoff validation'
     cases=$((cases + 1))
@@ -64,6 +64,12 @@ invoke
 grep -qx extract "$calls" || fail 'verified archive was not extracted'
 cases=$((cases + 1))
 
+new_case pinned-main-newer-than-dispatch
+invoke SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+[[ $result == 0 && -d $destination/Cadence.app ]] || fail 'pinned main handoff rejected'
+cases=$((cases + 1))
+new_case mismatched-pinned-main
+reject SOURCE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 new_case corrupt-archive
 printf 'modified\n' >> "$input/$archive"
 reject

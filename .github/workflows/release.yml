@@ -1,8 +1,6 @@
-name: Production macOS release
+name: Release latest main
 
 on:
-  push:
-    tags: ['v[0-9]*']
   workflow_dispatch:
 
 permissions:
@@ -15,19 +13,33 @@ concurrency:
 
 jobs:
   preflight:
-    name: Verify version tag, main ancestry, and unused release version
+    name: Select latest main and verify unused release version
     runs-on: macos-15
     timeout-minutes: 10
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
     steps:
+      - name: Require dispatch from the trusted main workflow
+        run: '[[ "$GITHUB_REF" == refs/heads/main ]]'
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate release identity before builds or Apple submissions
+      - name: Install release metadata prerequisite
+        run: brew install jq
+      - name: Pin latest main and validate before builds or Apple submissions
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-release-tag.sh
+        run: |
+          SOURCE_COMMIT=$(git rev-parse --verify HEAD)
+          RELEASE_TAG="v$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)"
+          export SOURCE_COMMIT RELEASE_TAG
+          ./scripts/verify-release-tag.sh --allow-missing-tag
+          printf 'source_sha=%s\nrelease_tag=%s\n' "$SOURCE_COMMIT" "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          printf 'Releasing %s from main commit %s.\n' "$RELEASE_TAG" "$SOURCE_COMMIT" >> "$GITHUB_STEP_SUMMARY"
 
   distribution:
     name: Test, build, sign, notarize, and verify universal installer
@@ -35,15 +47,20 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/distribution.yml
+    secrets: inherit
     with:
       authorize_notarization: true
-      release_tag: ${{ github.ref_name }}
+      source_sha: ${{ needs.preflight.outputs.source_sha }}
+      release_tag: ${{ needs.preflight.outputs.release_tag }}
 
   publish:
     name: Verify uploaded bytes and publish production release
-    needs: distribution
+    needs: [preflight, distribution]
     runs-on: macos-15
     timeout-minutes: 20
+    env:
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
     permissions:
       contents: write
     environment:
@@ -52,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Require the immutable signed artifact ID
@@ -67,10 +84,10 @@ jobs:
       - name: Recheck production tag and release eligibility
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-release-tag.sh
-      - name: Create draft, upload and read back assets, then publish
+        run: ./scripts/verify-release-tag.sh --allow-missing-tag
+      - name: Create version tag and draft, verify uploaded bytes, then publish
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_DIRECTORY: ${{ runner.temp }}/cadence-production
-        run: ./scripts/publish-release.sh "$GITHUB_REF_NAME" "$RELEASE_DIRECTORY"
+        run: ./scripts/publish-release.sh "$RELEASE_TAG" "$RELEASE_DIRECTORY"

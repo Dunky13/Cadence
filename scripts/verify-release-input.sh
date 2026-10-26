@@ -9,7 +9,7 @@ input=$1 destination=$2
 [[ ! -e $destination && ! -L $destination ]] || fail 'Extraction directory already exists.'
 version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
 source_commit=$(git rev-parse --verify HEAD)
-[[ ${GITHUB_SHA:-$source_commit} == "$source_commit" ]] || fail 'Checkout differs from the workflow commit.'
+[[ ${SOURCE_COMMIT:-${GITHUB_SHA:-$source_commit}} == "$source_commit" ]] || fail 'Checkout differs from the selected source commit.'
 archive="Cadence-App-$version-universal-local.zip"
 image="Cadence-Installer-$version-universal-local.dmg"
 [[ -f $input/SHA256SUMS && ! -L $input/SHA256SUMS ]] || fail 'Missing checksums.'
