@@ -1,11 +1,18 @@
 #!/bin/bash
 # Read-only preflight by default; --create-tag is used only after artifact verification.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+script_dir=$(cd "$(dirname "$0")" && pwd -P)
+cd "$script_dir/.."
 fail() { printf 'verify-release-tag: %s\n' "$*" >&2; exit 1; }
-mode=${1:-}
-[[ $# -le 1 ]] || fail 'Usage: verify-release-tag.sh [--allow-missing-tag|--create-tag]'
-case "$mode" in ''|--allow-missing-tag|--create-tag) ;; *) fail 'Unknown preflight mode.' ;; esac
+mode='' recover=${RECOVER_CANDIDATE:-false}
+for argument in "$@"; do
+    case "$argument" in
+        --resume) recover=true ;;
+        --allow-missing-tag|--create-tag) [[ -z $mode ]] || fail 'Conflicting preflight modes.'; mode=$argument ;;
+        *) fail 'Usage: verify-release-tag.sh [--allow-missing-tag|--create-tag] [--resume]' ;;
+    esac
+done
+[[ $recover == true || $recover == false ]] || fail 'RECOVER_CANDIDATE must be true or false.'
 tag=${RELEASE_TAG:-${GITHUB_REF_NAME:-}}
 commit=${SOURCE_COMMIT:-${GITHUB_SHA:-}}
 repository=${GITHUB_REPOSITORY:-}
@@ -54,8 +61,24 @@ jq -e 'type == "array" and all(.[]; type == "array" and all(.[];
     type == "object" and (.tag_name | type == "string") and
     (.draft | type == "boolean") and (.prerelease | type == "boolean")))' "$work/releases.json" >/dev/null \
     || fail 'Malformed GitHub release list.'
-jq -e --arg tag "$tag" 'all(.[][]; .tag_name != $tag)' "$work/releases.json" >/dev/null \
-    || fail 'A release or draft already exists for this tag. Reconcile it before retrying.'
+jq --arg tag "$tag" '[.[][] | select(.tag_name == $tag)]' "$work/releases.json" > "$work/matches.json"
+count=$(jq length "$work/matches.json")
+if [[ $count != 0 ]]; then
+    [[ $recover == true && $count == 1 ]] || fail 'A release or draft already exists; explicit same-candidate --resume is required.'
+    # Preflight admits drafts only. Published recovery belongs exclusively to
+    # publish-release, which downloads and verifies all four immutable assets.
+    jq '.[0]' "$work/matches.json" > "$work/candidate.json"
+    jq -e '.draft == true and .immutable == false' "$work/candidate.json" >/dev/null \
+        || fail 'Preflight recovery allows a bound draft only; published candidates require publisher validation.'
+    # shellcheck source=scripts/publication-candidate.sh
+    source "$script_dir/publication-candidate.sh"
+    source_commit=$commit
+    origin=$(publication_origin)
+    build=${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw Resources/Info.plist)}
+    publication_binding "$work/candidate.json" "$repository" "$build" "$origin" "$tag" "$version" "$source_commit" \
+        || fail 'Draft is not an unambiguous automation-owned same-source/build/artifact candidate.'
+    [[ -n $object ]] || fail 'A recovery draft requires its existing same-source remote tag.'
+fi
 # Compare decimal components as strings, avoiding integer overflow on large versions.
 version_newer() {
     local candidate=$1 previous=$2 left right index
@@ -87,6 +110,6 @@ if [[ $mode == --create-tag ]]; then
     fi
     # Never force a conflicting local or remote tag. Verify again after fetching.
     git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
-    "$0"
+    RECOVER_CANDIDATE=$recover "$script_dir/verify-release-tag.sh"
 fi
-printf 'Production preflight passed: %s at %s, on main, unused and newer than published versions.\n' "$tag" "$commit"
+printf 'Production preflight passed: %s at %s, on main, no conflicting release and newer than published versions.\n' "$tag" "$commit"

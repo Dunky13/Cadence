@@ -4,12 +4,12 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'check-dmg: %s\n' "$*" >&2; exit 1; }
-usage() { printf '%s\n' 'Usage: check-dmg.sh IMAGE --architecture arm64|x86_64|universal [--version X.Y.Z] [--release]'; }
+usage() { printf '%s\n' 'Usage: check-dmg.sh IMAGE --architecture arm64|x86_64|universal [--version X.Y.Z] [--release] [--launch-demo]'; }
 [[ $# -gt 0 ]] || { usage >&2; exit 2; }
 [[ $1 != --help && $1 != -h ]] || { usage; exit 0; }
 image=$1
 shift
-architecture='' version='' release=false
+architecture='' version='' release=false launch_demo=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --architecture|--version)
@@ -17,6 +17,7 @@ while [[ $# -gt 0 ]]; do
             case $1 in --architecture) architecture=$2 ;; --version) version=$2 ;; esac
             shift 2 ;;
         --release) release=true; shift ;;
+        --launch-demo) launch_demo=true; shift ;;
         *) usage >&2; fail "Unknown argument: $1" ;;
     esac
 done
@@ -32,6 +33,9 @@ if [[ $release == true ]]; then
     command -v spctl >/dev/null 2>&1 || fail 'Missing prerequisite: spctl'
     codesign --verify --strict "$image"
     image_signature=$(codesign --display --verbose=4 "$image" 2>&1)
+    if [[ -n ${EXPECTED_TEAM_ID:-} ]]; then
+        grep -qx "TeamIdentifier=$EXPECTED_TEAM_ID" <<< "$image_signature" || fail 'Installer signing authority differs.'
+    fi
     [[ $image_signature == *'Authority=Developer ID Application: '* ]] || fail 'Release image lacks a Developer ID Application signature.'
     xcrun stapler validate "$image"
     spctl --assess --type open --context context:primary-signature --verbose=2 "$image"
@@ -103,9 +107,16 @@ ditto --rsrc --extattr --qtn --acl "$app" "$work/Applications/Cadence.app"
 codesign --verify --deep --strict --all-architectures "$work/Applications/Cadence.app"
 if [[ $release == true ]]; then
     app_signature=$(codesign --display --verbose=4 "$app" 2>&1)
+    if [[ -n ${EXPECTED_TEAM_ID:-} ]]; then
+        grep -qx "TeamIdentifier=$EXPECTED_TEAM_ID" <<< "$app_signature" || fail 'Installed app signing authority differs.'
+    fi
     [[ $app_signature == *'Authority=Developer ID Application: '* ]] || fail 'Release app lacks a Developer ID Application signature.'
     xcrun stapler validate "$app"
     xcrun stapler validate "$work/Applications/Cadence.app"
     spctl --assess --type execute --verbose=2 "$work/Applications/Cadence.app"
+fi
+if [[ $launch_demo == true ]]; then
+    [[ $release == true ]] || fail 'Demo startup qualification requires release trust checks.'
+    "$(dirname "$0")/verify-demo-startup.sh" "$work/Applications/Cadence.app"
 fi
 printf 'Verified Cadence %s (%s): mounted layout and copied app signature.\n' "$actual_version" "$architecture"

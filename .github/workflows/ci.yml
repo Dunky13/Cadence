@@ -77,7 +77,7 @@ jobs:
           name: Cadence-macOS-universal-${{ inputs.source_sha || github.sha }}
           path: dist/packages/*-universal-local/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
           compression-level: 0
 
   ci-required:

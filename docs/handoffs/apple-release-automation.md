@@ -1,0 +1,27 @@
+# Cadence unattended Apple release handoff
+
+Delivery: [PR #3](https://github.com/Dunky13/Cadence/pull/3).
+
+Baseline: `be4551332fb7f2b37bf8e11a50a02f27177b8f37`, frozen 26 October 2026. The user explicitly authorized the full unattended endpoint, including immutable public publication. Scope is this repository's Apple release path. No other project's environment or stable authority is changed.
+
+The initial live snapshot established reviewer-free, main-only `apple-signing` and `production` environments, four public identity variables, zero environment/repository Apple secrets, no branch protection or rulesets, immutable releases disabled, no release/distribution runs and no tags/releases. Existing hosted CI run [40330172283](https://github.com/Dunky13/Cadence/actions/runs/40330172283) passed at the baseline, with universal artifact `12655193214`, digest `sha256:9fb7673fea0799522c5c0f80eaf554f698c815d7c95ee6971326e3093e41ce00`. That artifact is ad-hoc signed and supplies no Apple proof.
+
+Authorized one-time settings were applied and read back: strict `ci-required` from GitHub Actions app 15368 on main with administrator enforcement and conversation resolution; version-tag update/deletion prohibition; immutable releases enabled. Environment branch restrictions and isolated secrets were preserved. There was no reviewer rule to remove.
+
+The implementation preserves Swift universal builds, numeric committed stable versions and app-before-DMG notarization. It adds passed-CI promotion without rebuilding, bound retained state, submit-once recovery, scheduled continuation, matching Accepted diagnostics, mandatory tickets/signatures/Gatekeeper/installed demo startup, immutable draft reconciliation, and native public consumer verification. The protocol and operator interface are in [RELEASING.md](../RELEASING.md).
+
+The user subsequently authorized reuse of existing Apple-signing files and corresponding Keychain entries. All three Cadence Apple secrets were privately configured after matching the existing public identity; no credential value or plaintext file was exposed. Actual hosted signing, both Apple submissions, same-candidate provider recovery, stapling, public installation and publication remain unqualified. The initial repair introduced a separate per-release Administration-read credential. The final design removes that extra dependency: repository immutability is verified/configured once using existing administrator access, GitHub enforces it on publication, and mandatory published `.immutable: true` plus exact-byte/tag readback remains. The workflow token cannot disable the setting. No extra policy credential is required.
+
+Safe source/live-setting captures and raw test evidence are local chat deliverables, not repository content. The final chat report provides their actual location and source/run/submission/asset inventory. Do not invent provider IDs or treat fake-provider test results as Apple evidence. Checkpoint custody expires after 90 days; expiration requires explicit reconciliation and never authorizes replacing submitted bytes.
+
+
+Integrated review at `c722b9a9d484af5a2e65ad6c2c71a67897374c98` reported four findings, not a clean verdict. The repairs introduce a separate durable upload-claim step and narrowly proven unstarted-step recovery, select the newest authoritative checkpoint before evaluating expiry, recover only owned empty `starter` uploads, and initially isolated an Administration-read policy credential (superseded by the one-time policy design described above). Focused regression evidence and a fresh review must qualify those repairs before merge. An upload whose execution remains ambiguous is intentionally held for UUID/history reconciliation; missing history alone never permits a new upload.
+
+
+The ecad271 repair recheck closed both P1 findings and checkpoint selection, and reproduced one remaining P2: a generic empty starter can complete between GET and unconditional DELETE. GitHub does not document conditional DELETE support. Cleanup is therefore now limited to an exact terminal HTTP 502 upload receipt under GitHub's documented abandoned-starter contract. Safe publication receipts are retained/restored as separate immutable Actions artifacts; unknown upload outcomes never authorize deletion. The fixture no longer invents a state/size guard in the server's DELETE endpoint. This follow-up requires fresh focused contracts, source review and hosted CI before merge.
+
+
+The immutable-setting API check was an additional implementation constraint, not a requirement for a new stable trust authority. It was removed in favor of the accepted one-time GitHub policy configuration and mandatory actual immutable-publication proof. The setting was read back enabled during final source preparation. Tests for administrative API lookup failure were replaced by disabled-policy/mutable-result publication failures; no Apple, signature, ticket, installation, checksum, tag or immutable-result gate was removed.
+
+
+Final root boundary review also identified partial GitHub reruns replaying an older successful preflight checkpoint ID. The signing CI-origin guard now rejects every run-attempt greater than one before credentials or network work. Fresh scheduled/no-input-dispatch runs remain the recovery owner and select current custody. Four focused contracts cover this additional guard. The low-level receipt/phase recovery protocol is unchanged.

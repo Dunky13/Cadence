@@ -32,6 +32,15 @@ MOCK
 cat > "$work/bin/security" <<'MOCK'
 #!/bin/bash
 set -euo pipefail
+if [[ $1 == -i ]]; then
+    [[ $# == 1 ]] || exit 115
+    IFS= read -r private_input
+    # Fixture-only shell parser; installed security parsing is qualified separately.
+    eval "set -- $private_input"
+    printf 'stdin\n' >> "$FIXTURE_STATE/transport"
+else
+    printf 'argv\n' >> "$FIXTURE_STATE/transport"
+fi
 action=$1
 shift
 printf '%s\n' "$action" >> "$FIXTURE_STATE/actions"
@@ -138,6 +147,9 @@ run_case() {
     *) cmp -s "$state/original-list" "$state/search-list" || { printf 'FAIL %s: search list not restored\n' "$name" >&2; exit 1; } ;;
   esac
   if [[ $mode == import-failure ]]; then [[ ! -e $state/child-ran ]] || exit 1; fi
+  if [[ -f $state/transport ]]; then
+    [[ $(awk '$0 == "stdin" {n++} END {print n+0}' "$state/transport") -ge 1 || ! -f $state/keychain-path ]] || exit 116
+fi
   printf 'PASS %s\n' "$name"
 }
 
