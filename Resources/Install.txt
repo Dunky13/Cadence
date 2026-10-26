@@ -1,0 +1,8 @@
+Install Cadence
+
+1. Drag Cadence.app onto Applications.
+2. Open Cadence from Applications, then click its waveform menu bar icon.
+3. Eject this disk image.
+
+To update an existing installation, quit Cadence before replacing the app.
+Installing or updating Cadence leaves your configured jobs and logs in place.
