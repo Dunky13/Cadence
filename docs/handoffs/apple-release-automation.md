@@ -22,3 +22,6 @@ The ecad271 repair recheck closed both P1 findings and checkpoint selection, and
 
 
 The immutable-setting API check was an additional implementation constraint, not a requirement for a new stable trust authority. It was removed in favor of the accepted one-time GitHub policy configuration and mandatory actual immutable-publication proof. The setting was read back enabled during final source preparation. Tests for administrative API lookup failure were replaced by disabled-policy/mutable-result publication failures; no Apple, signature, ticket, installation, checksum, tag or immutable-result gate was removed.
+
+
+Final root boundary review also identified partial GitHub reruns replaying an older successful preflight checkpoint ID. The signing CI-origin guard now rejects every run-attempt greater than one before credentials or network work. Fresh scheduled/no-input-dispatch runs remain the recovery owner and select current custody. Four focused contracts cover this additional guard. The low-level receipt/phase recovery protocol is unchanged.

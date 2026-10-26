@@ -16,6 +16,7 @@ actionlint .github/workflows/*.yml
 ./scripts/tests/apple-release-recovery-contracts.sh
 ./scripts/tests/checkpoint-contracts.sh
 ./scripts/tests/upload-claim-contracts.sh
+./scripts/tests/signing-attempt-contracts.sh
 ./scripts/tests/artifact-download-contracts.sh
 ./scripts/tests/release-selection-contracts.sh
 ./scripts/tests/release-input-contracts.sh

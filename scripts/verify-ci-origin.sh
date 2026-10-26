@@ -3,6 +3,9 @@
 set -euo pipefail
 umask 077
 fail() { printf 'verify-ci-origin: %s\n' "$*" >&2; exit 1; }
+# A job-only rerun can replay a successful preflight's old checkpoint ID. Fresh
+# scheduled/dispatch runs select current custody and remain the recovery owner.
+[[ ${GITHUB_RUN_ATTEMPT:-} == 1 ]] || fail 'Job reruns may replay stale custody. Use a fresh scheduled run or no-input release dispatch; no signing started.'
 [[ ${GITHUB_REPOSITORY:-} == Dunky13/Cadence && ${GITHUB_REF:-} == refs/heads/main ]] || fail 'Only this repository main may sign.'
 [[ ${SOURCE_COMMIT:-} =~ ^[0-9a-f]{40}$ && ${BUILD_CI_RUN_ID:-} =~ ^[1-9][0-9]*$ && ${BUILD_ARTIFACT_ID:-} =~ ^[1-9][0-9]*$ ]] || fail 'Missing exact source/run/artifact binding.'
 [[ ${BUILD_ARTIFACT_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Missing immutable build digest.'
