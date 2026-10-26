@@ -102,7 +102,7 @@ passed() {
     if [[ -d $evidence ]] && rg -q 'FAKE_PRIVATE_STDERR_MARKER|fixture-profile' "$evidence"; then fail 'private evidence leak'; fi
     cases=$((cases+1)); printf 'PASS %s\n' "$case_name"
 }
-prepare() { invoke prepare accepted; expect 0; [[ ! -s $calls ]] || fail 'prepare used network'; }
+prepare() { invoke prepare accepted; expect 0; [[ ! -s $calls ]] || fail 'prepare used network'; invoke claim accepted; expect 0; }
 submit() { invoke submit accepted; expect 0; }
 
 for kind in app installer; do
@@ -131,9 +131,26 @@ invoke wait accepted; expect 0
 passed
 new_case restored-same-owner
 prepare
-jq '.restored=true' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
+jq '.restored=true | .claim_restored=true' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
 invoke submit accepted; expect 0
 [[ $(count submit) == 0 && $(count history) == 1 ]] || fail 'explicit restored intent uploaded'
+passed
+new_case cancelled-before-upload-claim
+invoke prepare accepted; expect 0
+jq '.restored=true' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
+export GITHUB_RUN_ID=404 GITHUB_RUN_ATTEMPT=2
+invoke claim history-missing; expect 0
+invoke submit history-missing; expect 0
+[[ $(count submit) == 1 && $(count history) == 0 ]] || fail 'proven unclaimed state did not upload exactly once'
+assert_json '.ci_run.id == "303" and .upload_owner.id == "404" and .attempted'
+passed
+new_case claimed-uncertainty-stays-closed
+prepare
+jq '.restored=true | .claim_restored=true' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
+invoke claim history-missing; expect 0
+invoke submit history-missing; expect 75
+invoke submit history-missing; expect 75
+[[ $(count submit) == 0 ]] || fail 'ambiguous claimed upload repeated'
 passed
 new_case lost-uuid
 prepare

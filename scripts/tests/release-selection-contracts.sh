@@ -82,4 +82,7 @@ reset_case; checkpoint; mutate owner '.path=".github/workflows/ci.yml"'; invoke;
 grep -q '^checkpoint_id=$' "$work/output"
 reset_case; export CONFLICTING_TAG=true; invoke; check 'conflicting version tag before credentials' 1; unset CONFLICTING_TAG
 reset_case; export OFF_MAIN=true; invoke; check 'source no longer on main' 1; unset OFF_MAIN
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401) ] | .[0].artifacts[0].expired=true'; invoke; check 'newest valid custody supersedes expired older checkpoint' 0
+grep -q 'checkpoint_id=401' "$work/output"
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401 | .expired=true) ]'; invoke; check 'newest expired custody never falls back' 1
 printf '%s release-selection contracts passed (synthetic only).\n' "$cases"

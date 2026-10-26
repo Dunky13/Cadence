@@ -60,8 +60,12 @@ asset_list() {
         printf '%s' "$name" > "$state/id-$id"
         size=$(wc -c < "$path")
         digest=$(shasum -a 256 < "$path"); digest=${digest%% *}
-        jq -cn --arg name "$name" --argjson id "$id" --argjson size "$size" --arg digest "sha256:$digest" \
-            '{name:$name,id:$id,size:$size,digest:$digest,state:"uploaded"}'
+        asset_state=uploaded
+        [[ ! -f $state/starter-$name ]] || asset_state=starter
+        uploader_id=41898282
+        [[ $mode != foreign-starter ]] || uploader_id=7
+        jq -cn --arg name "$name" --argjson id "$id" --argjson size "$size" --arg digest "sha256:$digest" --arg state "$asset_state" --argjson uploader "$uploader_id" \
+            '{name:$name,id:$id,size:$size,digest:$digest,state:$state,uploader:{login:"github-actions[bot]",type:"Bot",id:$uploader}}'
     done | jq -s .
     printf ']'
 }
@@ -78,6 +82,11 @@ if [[ $1 == api ]]; then
         previous=$argument
     done
     header() { if [[ $include == true ]]; then printf 'HTTP/2.0 %s\r\nContent-Type: application/json\r\n\r\n' "$1"; fi; }
+    if [[ $endpoint == repos/fixture/Cadence/immutable-releases ]]; then
+        [[ $GH_TOKEN == synthetic-read-only ]] || exit 89
+    else
+        [[ $GH_TOKEN == synthetic ]] || exit 88
+    fi
     case "$endpoint" in
         repos/fixture/Cadence/git/refs)
             record tag-create
@@ -154,6 +163,7 @@ if [[ $1 == api ]]; then
             [[ $* == *'Content-Length: '* && $* == *'Content-Type: application/octet-stream'* ]] || exit 1
             name=${endpoint##*name=}
             [[ $method == POST && -f $input_file && ! -e $state/assets/$name ]] || exit 1
+            if [[ $mode == starter-upload ]]; then : > "$state/assets/$name"; touch "$state/starter-$name"; exit 1; fi
             if [[ $mode == upload-failure ]]; then printf 'partial\n' > "$state/assets/partial"; exit 1; fi
             if [[ $mode == upload-no-write || ( $mode == interrupted-upload && $name == Cadence-Installer-1.2.3-universal.dmg ) ]]; then exit 1; fi
             cp "$input_file" "$state/assets/$name"
@@ -167,9 +177,20 @@ if [[ $1 == api ]]; then
             elif [[ $mode == incomplete-asset ]]; then asset_list | jq '.[0] |= map(.state="starter")'
             else asset_list; fi ;;
         repos/fixture/Cadence/releases/assets/*)
-            record download
             id=${endpoint##*/}
             name=$(cat "$state/id-$id")
+            if [[ $method == DELETE ]]; then
+                [[ -f $state/starter-$name && ! -s $state/assets/$name ]] || exit 1
+                record delete
+                rm "$state/assets/$name" "$state/starter-$name"
+                [[ $mode != lost-delete-response ]] || exit 1
+                exit 0
+            fi
+            if [[ $* != *application/octet-stream* ]]; then
+                asset_list | jq --argjson id "$id" '.[0][] | select(.id == $id)'
+                exit 0
+            fi
+            record download
             [[ $mode != asset-download-error ]] || exit 1
             cat "$state/assets/$name"
             if [[ $name == Cadence-App-1.2.3-universal.zip && ( $mode == corrupt-draft-download || ( $mode == corrupt-public-download && -e $state/published ) ) ]]; then
@@ -206,7 +227,7 @@ invoke() {
     : > "$state/summary"
     : > "$state/outputs"
     env PATH="$work/bin:$PATH" TMPDIR="$state/tmp" PUBLICATION_STATE="$state" PUBLICATION_MODE="$mode" \
-        GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=fixture/Cadence GH_TOKEN=synthetic \
+        GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=fixture/Cadence GH_TOKEN=synthetic RELEASE_POLICY_READ_TOKEN=synthetic-read-only \
         GH_HOST=github.com GITHUB_STEP_SUMMARY="$state/summary" GITHUB_OUTPUT="$state/outputs" \
         SOURCE_COMMIT='' RELEASE_TAG='' RECOVER_CANDIDATE=false \
         BUILD_CI_RUN_ID=17 BUILD_ARTIFACT_ID=23 \
@@ -326,7 +347,7 @@ seed_draft() {
     : > "$state/calls"
 }
 no_mutations() {
-    ! grep -Eq '^event:(create|upload|publish|tag-create)$' "$state/calls" || fail 'unexpected recovery mutation'
+    ! grep -Eq '^event:(create|upload|publish|tag-create|delete)$' "$state/calls" || fail 'unexpected recovery mutation'
 }
 for interruption in publish-failure upload-no-write interrupted-upload; do
     seed_draft "resume-$interruption" "$interruption"
@@ -431,4 +452,21 @@ checksums
 invoke
 [[ $result == 0 ]] || fail 'compatible v2 manifest rejected'
 cases=$((cases + 1))
+for recovery_mode in success lost-delete-response; do
+    seed_draft "resume-empty-starter-$recovery_mode" starter-upload
+    mode=$recovery_mode
+    invoke RECOVER_CANDIDATE=true
+    [[ $result == 0 && -e $state/published ]] || fail 'owned empty starter did not recover'
+    [[ $(grep -c '^event:delete$' "$state/calls") == 1 ]] || fail 'starter deletion was not limited to one exact ID'
+    [[ $(grep -c '^event:upload$' "$state/calls") == 4 ]] || fail 'missing assets were not completed exactly once'
+    cases=$((cases + 1))
+done
+for invalid_starter in foreign-starter nonempty-starter; do
+    seed_draft "reject-$invalid_starter" starter-upload
+    if [[ $invalid_starter == nonempty-starter ]]; then printf 'protected bytes' > "$state/assets/Cadence-App-1.2.3-universal.zip"; else mode=foreign-starter; fi
+    invoke RECOVER_CANDIDATE=true
+    [[ $result != 0 ]] || fail 'unsafe starter repair accepted'
+    no_mutations
+    cases=$((cases + 1))
+done
 printf 'Publication contracts: %s cases passed; no provider calls or publication.\n' "$cases"

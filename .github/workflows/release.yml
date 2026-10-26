@@ -24,6 +24,7 @@ jobs:
     if: github.repository == 'Dunky13/Cadence' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: macos-15
     timeout-minutes: 10
+    environment: production
     outputs:
       eligible: ${{ steps.source.outputs.eligible }}
       source_sha: ${{ steps.source.outputs.source_sha }}
@@ -49,10 +50,8 @@ jobs:
       - name: Verify effective immutable-release policy before Apple access
         if: steps.source.outputs.eligible == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" > "$RUNNER_TEMP/release-policy.json"
-          jq -e '.enabled == true' "$RUNNER_TEMP/release-policy.json"
+          RELEASE_POLICY_READ_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN }}
+        run: ./scripts/verify-release-policy.sh
 
   distribution:
     name: Sign or resume exact universal candidate
@@ -105,6 +104,8 @@ jobs:
         run: ./scripts/download-release-artifact.sh "$ARTIFACT_ID" "$ARTIFACT_DIGEST" distribution "$RUNNER_TEMP/cadence-production"
       - name: Verify or complete the exact candidate publication
         id: publish
+        env:
+          RELEASE_POLICY_READ_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN }}
         run: ./scripts/publish-release.sh --resume "$RELEASE_TAG" "$RUNNER_TEMP/cadence-production"
 
   consumer:

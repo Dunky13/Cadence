@@ -89,6 +89,15 @@ jobs:
           CHECKPOINT_DIGEST=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CHECKPOINT_ID" --jq .digest)
           ./scripts/download-release-artifact.sh "$CHECKPOINT_ID" "$CHECKPOINT_DIGEST" checkpoint "$RUNNER_TEMP/cadence-checkpoint"
           ./scripts/checkpoint-state.sh restore "$STATE_DIRECTORY" "$RUNNER_TEMP/cadence-checkpoint"
+          ./scripts/recover-unstarted-upload.sh "$STATE_DIRECTORY"
+      - name: Recover original CI input if preparation never produced submitted bytes
+        if: inputs.checkpoint_id != ''
+        run: |
+          if [[ ! -e "$STATE_DIRECTORY/prepared-app" ]]; then
+            [[ ! -e "$STATE_DIRECTORY/evidence/app-universal-receipt.json" ]]
+            ./scripts/download-release-artifact.sh "$BUILD_ARTIFACT_ID" "$BUILD_ARTIFACT_DIGEST" build "$RUNNER_TEMP/cadence-unsigned"
+            ./scripts/verify-release-input.sh "$RUNNER_TEMP/cadence-unsigned" "$RUNNER_TEMP/cadence-verified"
+          fi
       - name: Candidate phase prepare
         id: prepare
         env:
@@ -123,6 +132,43 @@ jobs:
         with:
           name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-prepare
           path: ${{ runner.temp }}/checkpoint-prepare/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase app-claim
+        id: app_claim
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase app-claim --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after app-claim
+        id: seal_app_claim
+        if: ${{ always() && steps.app_claim.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-app-claim"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after app-claim
+        if: ${{ always() && steps.seal_app_claim.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-app-claim
+          path: ${{ runner.temp }}/checkpoint-app-claim/*
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
@@ -235,6 +281,44 @@ jobs:
         with:
           name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-installer-prepare
           path: ${{ runner.temp }}/checkpoint-installer-prepare/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase installer-claim
+        id: installer_claim
+        if: steps.app_wait.outputs.pending != 'true'
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase installer-claim --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after installer-claim
+        id: seal_installer_claim
+        if: ${{ always() && steps.installer_claim.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-installer-claim"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after installer-claim
+        if: ${{ always() && steps.seal_installer_claim.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-installer-claim
+          path: ${{ runner.temp }}/checkpoint-installer-claim/*
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

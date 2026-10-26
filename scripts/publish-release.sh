@@ -136,8 +136,9 @@ immutable_policy() {
     # A draft's immutable:false is not a policy indicator. GitHub documents no
     # effective policy field on a draft. This GET requires Administration:read;
     # ordinary GITHUB_TOKEN can lack it. Never infer success or elevate a token.
-    gh api --hostname github.com "repos/$repo/immutable-releases" > "$work/policy.json" 2> "$work/api-error" \
-        || fail 'Immutable-release precondition: GET immutable-releases requires repository Administration read access; current token could not verify policy. No token elevation is performed.'
+    [[ -n ${RELEASE_POLICY_READ_TOKEN:-} ]] || fail 'A dedicated repository Administration-read policy credential is required.'
+    GH_TOKEN="$RELEASE_POLICY_READ_TOKEN" gh api --hostname github.com "repos/$repo/immutable-releases" > "$work/policy.json" 2> "$work/api-error" \
+        || fail 'Immutable-release precondition: GET immutable-releases requires repository Administration read access; dedicated read-only policy credential could not verify policy. No token elevation is performed.'
     jq -e '.enabled == true' "$work/policy.json" >/dev/null \
         || fail 'Immutable-release precondition: repository immutable releases must be enabled.'
 }
@@ -201,6 +202,36 @@ verify_assets() {
         cmp -s "$input/$name" "$destination/$name" || fail 'Downloaded release bytes differ from verified local bytes.'
     done < "$work/asset-ids"
     if [[ $complete == true ]]; then validate_payload "$destination"; fi
+}
+repair_empty_starters() {
+    local name id result
+    verify_metadata true
+    gh api --hostname github.com --paginate --slurp "repos/$repo/releases/$release_id/assets?per_page=100" > "$work/starter-assets.json" \
+        || fail 'Unable to inspect unfinished draft uploads.'
+    jq -e --argjson expected "$expected_json" '
+        type == "array" and all(.[]; type == "array") and
+        ([.[][]] as $a | ([$a[].name] | length == (unique | length)) and
+        all($a[]; (.name as $name | $expected | index($name) != null) and
+            (.id | type == "number" and . > 0 and . == floor) and
+            (.state == "uploaded" or (.state == "starter" and .size == 0 and
+             .uploader.login == "github-actions[bot]" and .uploader.type == "Bot" and .uploader.id == 41898282))))' \
+        "$work/starter-assets.json" >/dev/null || fail 'An unfinished asset is unowned, nonempty, duplicated or unexpected.'
+    jq -r '.[][] | select(.state == "starter") | [.name,(.id|tostring)] | @tsv' "$work/starter-assets.json" > "$work/starters"
+    while IFS=$'\t' read -r name id; do
+        [[ -n $name ]] || continue
+        verify_metadata true
+        gh api --hostname github.com "repos/$repo/releases/assets/$id" > "$work/starter.json" || fail 'Unable to recheck unfinished asset.'
+        jq -e --arg name "$name" --argjson id "$id" '.id == $id and .name == $name and .state == "starter" and .size == 0
+            and .uploader.login == "github-actions[bot]" and .uploader.type == "Bot" and .uploader.id == 41898282' \
+            "$work/starter.json" >/dev/null || fail 'Unfinished asset changed; no deletion is permitted.'
+        result=0
+        gh api --hostname github.com --method DELETE "repos/$repo/releases/assets/$id" > "$work/delete-output" 2> "$work/api-error" || result=$?
+        # Reconcile a lost DELETE response by ID. Never touch completed bytes.
+        gh api --hostname github.com --paginate --slurp "repos/$repo/releases/$release_id/assets?per_page=100" > "$work/after-delete.json" \
+            || fail 'Unfinished-asset cleanup is unresolved.'
+        jq -e --argjson id "$id" 'all(.[][]; .id != $id)' "$work/after-delete.json" >/dev/null \
+            || fail "Empty unfinished upload was not removed (exit $result)."
+    done < "$work/starters"
 }
 immutable_policy
 find_candidate
@@ -270,6 +301,7 @@ else
         existing=$release_id
     fi
     verify_metadata true
+    repair_empty_starters
     verify_assets "$work/existing-assets" false
     # Upload each missing file once. Reconcile every response, even a failed one.
     for name in "${files[@]}"; do

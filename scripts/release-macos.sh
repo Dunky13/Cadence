@@ -20,7 +20,7 @@ while [[ $# -gt 0 ]]; do
     esac
     shift 2
 done
-case $phase in prepare|app-submit|app-wait|installer-prepare|installer-submit|installer-wait|finish) ;; *) fail 'Invalid release phase.' ;; esac
+case $phase in prepare|app-claim|app-submit|app-wait|installer-prepare|installer-claim|installer-submit|installer-wait|finish) ;; *) fail 'Invalid release phase.' ;; esac
 [[ $(uname -s) == Darwin ]] || fail 'macOS is required.'
 for tool in codesign xcrun ditto plutil shasum jq spctl lipo; do command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"; done
 version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
@@ -162,7 +162,7 @@ case $phase in
         check_prepared_app
         notary app prepare
         ;;
-    app-submit|app-wait)
+    app-claim|app-submit|app-wait)
         check_prepared_app
         notary app "${phase#app-}"
         ;;
@@ -198,7 +198,7 @@ case $phase in
         check_installer
         notary installer prepare
         ;;
-    installer-submit|installer-wait)
+    installer-claim|installer-submit|installer-wait)
         check_prepared_app
         notary app verify
         check_ready_app

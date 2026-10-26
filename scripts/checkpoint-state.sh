@@ -60,7 +60,7 @@ case $mode in
         mkdir -p "$state"
         tar -xzf "$envelope/state.tar.gz" -C "$state"
         while IFS= read -r receipt; do
-            jq '.restored = true' "$receipt" > "$receipt.restored"
+            jq '.restored = true | if .upload_claimed == true then .claim_restored = true else . end' "$receipt" > "$receipt.restored"
             mv "$receipt.restored" "$receipt"
         done < <(find "$state" -name '*-receipt.json' -type f)
         ;;

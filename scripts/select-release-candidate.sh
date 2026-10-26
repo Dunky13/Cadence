@@ -38,7 +38,7 @@ mv "$work/trusted.json" "$work/all.json"
 # reconciles exact public bytes, tag and immutable state after a lost response.
 jq -r '.[] | select(.name | test("^Cadence-Checkpoint-[0-9]+-[0-9]+-[0-9]+-[0-9]+-[a-z-]+$")) |
     [.name,.id,.expired,.workflow_run.id] | @tsv' "$work/all.json" > "$work/checkpoints"
-checkpoint_id='' checkpoint_run='' build_run='' build_artifact=''
+checkpoint_id='' checkpoint_run='' checkpoint_expired='' build_run='' build_artifact=''
 while IFS=$'\t' read -r name id expired owner; do
     [[ -n $name ]] || continue
     IFS=- read -r _ _ ci artifact _ _ _ <<< "$name"
@@ -47,10 +47,10 @@ while IFS=$'\t' read -r name id expired owner; do
     # Finish the oldest active candidate first; choose its newest immutable state.
     if [[ -z $build_run ]]; then build_run=$ci; build_artifact=$artifact; fi
     [[ $build_run == "$ci" && $build_artifact == "$artifact" ]] || continue
-    [[ $expired == false ]] || fail 'Active candidate custody expired. Reconcile retained submissions; rebuilding is forbidden.'
-    checkpoint_id=$id checkpoint_run=$owner
+    checkpoint_id=$id checkpoint_run=$owner checkpoint_expired=$expired
  done < "$work/checkpoints"
 if [[ -n $checkpoint_id ]]; then
+    [[ $checkpoint_expired == false ]] || fail 'Newest active candidate custody expired. Reconcile retained submissions; rebuilding is forbidden.'
     gh api "repos/$repo/actions/runs/$checkpoint_run" > "$work/owner.json"
     jq -e --arg repo "$repo" --argjson repo_id "$repo_id" '
         .path == ".github/workflows/release.yml" and .head_branch == "main"

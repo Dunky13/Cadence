@@ -21,7 +21,7 @@ done
 [[ $(uname -s) == Darwin ]] || fail 'macOS is required.'
 for tool in xcrun jq shasum mktemp; do command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"; done
 binding=$(apple_binding "$version" "$build" "$architecture")
-case $operation in prepare|submit|wait|verify) ;; *) fail 'Operation must be prepare, submit, wait, or verify.' ;; esac
+case $operation in prepare|claim|submit|wait|verify) ;; *) fail 'Operation must be prepare, claim, submit, wait, or verify.' ;; esac
 case "$stage" in
     app) expected="Cadence-App-$version-build-$build-$architecture.zip" ;;
     installer) expected="Cadence-Installer-$version-build-$build-$architecture.dmg" ;;
@@ -58,6 +58,11 @@ if [[ -e $receipt || -L $receipt ]]; then
         and (.ci_run.id | type == "string" and test("^[1-9][0-9]*$"))
         and (.ci_run.attempt | type == "string" and test("^[1-9][0-9]*$"))
         and (.restored | type == "boolean") and (.attempted | type == "boolean") and (.diagnostics.verified | type == "boolean")
+        and (.upload_claimed | type == "boolean") and (.claim_restored | type == "boolean")
+        and (if .upload_claimed then
+            (.upload_owner.id | type == "string" and test("^[1-9][0-9]*$")) and
+            (.upload_owner.attempt | type == "string" and test("^[1-9][0-9]*$"))
+            else .upload_owner == null and .attempted == false end)
         and (.submission_id == null or (.submission_id | type == "string" and
           test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")))
         and (if .attempted == false then .submission_id == null and .status == "Prepared" else true end))' \
@@ -68,6 +73,7 @@ else
         --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" '
         {schema:"cadence/apple-notarization/v2",binding:$binding,stage:$stage,archive_filename:$name,
          submitted_sha256:$sha,ci_run:{id:$run,attempt:$attempt},restored:false,attempted:false,
+         upload_claimed:false,claim_restored:false,upload_owner:null,
          submission_id:null,status:"Prepared",wait_exit_status:null,
          diagnostics:{verified:false,log_file:null,warning_count:null}}' > "$work/receipt.json"
     apple_atomic "$work/receipt.json" "$receipt"
@@ -97,6 +103,15 @@ fi
 # update passes jq programs unchanged; dollar names belong to jq.
 # shellcheck disable=SC2016
 update() { jq "$@" "$receipt" > "$work/receipt.json"; apple_atomic "$work/receipt.json" "$receipt"; }
+if [[ $operation == claim ]]; then
+    if [[ $(jq -r .upload_claimed "$receipt") == false ]]; then
+        [[ -z $id && $(jq -r .attempted "$receipt") == false ]] || fail 'An attempted submission cannot be claimed again.'
+        update --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            '.upload_claimed = true | .claim_restored = false | .upload_owner = {id:$run,attempt:$attempt}'
+    fi
+    # The caller must persist this claim before entering the separate upload step.
+    exit 0
+fi
 read_id() {
     jq -ser '(if length == 1 then .[0].id else null end) |
         select(type == "string" and test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")) | ascii_downcase' "$1" 2>/dev/null
@@ -113,9 +128,10 @@ retain_unverified() {
     fi
 }
 pending() { printf 'notarize-artifact: %s; retained state: %s\n' "$*" "$receipt" >&2; exit 75; }
-if [[ $operation == submit && $(jq -r .restored "$receipt") == false && -z $id && $(jq -r .attempted "$receipt") == false \
-    && $(jq -r .ci_run.id "$receipt") == "$GITHUB_RUN_ID" \
-    && $(jq -r .ci_run.attempt "$receipt") == "$GITHUB_RUN_ATTEMPT" ]]; then
+if [[ $operation == submit && $(jq -r .upload_claimed "$receipt") == true && $(jq -r .claim_restored "$receipt") == false \
+    && -z $id && $(jq -r .attempted "$receipt") == false \
+    && $(jq -r .upload_owner.id "$receipt") == "$GITHUB_RUN_ID" \
+    && $(jq -r .upload_owner.attempt "$receipt") == "$GITHUB_RUN_ATTEMPT" ]]; then
     # Persist before upload, including when the process dies without an answer.
     update '.attempted = true | .status = "Unknown"'
     submit_result=0
