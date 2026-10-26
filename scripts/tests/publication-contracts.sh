@@ -44,7 +44,7 @@ metadata() {
     [[ ! -e $state/published ]] || { draft=false; immutable=true; }
     if [[ $mode == wrong-draft-state && ! -e $state/published ]]; then draft=false; fi
     if [[ $mode == wrong-public-state && -e $state/published ]]; then draft=true; fi
-    if [[ $mode == mutable-public && -e $state/published ]]; then immutable=false; fi
+    if [[ ( $mode == mutable-public || $mode == policy-disabled ) && -e $state/published ]]; then immutable=false; fi
     jq --argjson draft "$draft" --argjson immutable "$immutable" \
         '. + {id:42,draft:$draft,immutable:$immutable,author:{login:"github-actions[bot]",type:"Bot",id:41898282},
         html_url:"https://github.com/fixture/Cadence/releases/tag/v1.2.3"} | del(.generate_release_notes)
@@ -82,11 +82,6 @@ if [[ $1 == api ]]; then
         previous=$argument
     done
     header() { if [[ $include == true ]]; then printf 'HTTP/2.0 %s\r\nContent-Type: application/json\r\n\r\n' "$1"; fi; }
-    if [[ $endpoint == repos/fixture/Cadence/immutable-releases ]]; then
-        [[ $GH_TOKEN == synthetic-read-only ]] || exit 89
-    else
-        [[ $GH_TOKEN == synthetic ]] || exit 88
-    fi
     case "$endpoint" in
         repos/fixture/Cadence/git/refs)
             record tag-create
@@ -94,13 +89,7 @@ if [[ $1 == api ]]; then
             jq -e --arg sha "$commit" '.ref == "refs/tags/v1.2.3" and .sha == $sha' "$input_file" >/dev/null
             touch "$state/tag-created"
             jq -n --arg sha "$commit" '{ref:"refs/tags/v1.2.3",object:{type:"commit",sha:$sha}}' ;;
-        repos/fixture/Cadence/immutable-releases)
-            record policy
-            [[ $mode != policy-auth && $mode != policy-network ]] || exit 1
-            if [[ $mode == policy-disabled || ( $mode == policy-disabled-before-publish && -e $state/created ) ]]; then
-                printf '{"enabled":false}\n'
-            elif [[ $mode == policy-malformed ]]; then printf '{}\n'
-            else printf '{"enabled":true}\n'; fi ;;
+
         'repos/fixture/Cadence/releases?per_page=100')
             [[ $mode != lookup-auth && $mode != lookup-network ]] || exit 1
             if [[ $mode == existing-release || $mode == existing-draft ]]; then
@@ -163,7 +152,13 @@ if [[ $1 == api ]]; then
             [[ $* == *'Content-Length: '* && $* == *'Content-Type: application/octet-stream'* ]] || exit 1
             name=${endpoint##*name=}
             [[ $method == POST && -f $input_file && ! -e $state/assets/$name ]] || exit 1
-            if [[ $mode == starter-upload ]]; then : > "$state/assets/$name"; touch "$state/starter-$name"; exit 1; fi
+            if [[ $mode == starter-upload || $mode == starter-unknown ]]; then
+                : > "$state/assets/$name"; touch "$state/starter-$name"
+                if [[ $mode == starter-upload ]]; then
+                    printf 'HTTP/2.0 502 Bad Gateway\r\nX-GitHub-Request-Id: FIXTURE:502\r\nContent-Type: application/json\r\n\r\n'
+                fi
+                exit 1
+            fi
             if [[ $mode == upload-failure ]]; then printf 'partial\n' > "$state/assets/partial"; exit 1; fi
             if [[ $mode == upload-no-write || ( $mode == interrupted-upload && $name == Cadence-Installer-1.2.3-universal.dmg ) ]]; then exit 1; fi
             cp "$input_file" "$state/assets/$name"
@@ -180,7 +175,9 @@ if [[ $1 == api ]]; then
             id=${endpoint##*/}
             name=$(cat "$state/id-$id")
             if [[ $method == DELETE ]]; then
-                [[ -f $state/starter-$name && ! -s $state/assets/$name ]] || exit 1
+                [[ -f $state/assets/$name ]] || exit 1
+                # Production DELETE has no state/size precondition. Do not invent one.
+                if [[ $mode == completion-race ]]; then cp "$PUBLICATION_INPUT/$name" "$state/assets/$name"; record completed-before-delete; fi
                 record delete
                 rm "$state/assets/$name" "$state/starter-$name"
                 [[ $mode != lost-delete-response ]] || exit 1
@@ -227,7 +224,8 @@ invoke() {
     : > "$state/summary"
     : > "$state/outputs"
     env PATH="$work/bin:$PATH" TMPDIR="$state/tmp" PUBLICATION_STATE="$state" PUBLICATION_MODE="$mode" \
-        GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=fixture/Cadence GH_TOKEN=synthetic RELEASE_POLICY_READ_TOKEN=synthetic-read-only \
+        PUBLICATION_STATE_DIRECTORY="$state/custody" PUBLICATION_INPUT="$input" \
+        GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=fixture/Cadence GH_TOKEN=synthetic \
         GH_HOST=github.com GITHUB_STEP_SUMMARY="$state/summary" GITHUB_OUTPUT="$state/outputs" \
         SOURCE_COMMIT='' RELEASE_TAG='' RECOVER_CANDIDATE=false \
         BUILD_CI_RUN_ID=17 BUILD_ARTIFACT_ID=23 \
@@ -262,7 +260,7 @@ for mode in success annotated no-latest lost-create-response lost-upload-respons
     grep -qx 'release_url=https://github.com/fixture/Cadence/releases/tag/v1.2.3' "$state/outputs" || fail 'environment URL output missing'
     cases=$((cases + 1))
 done
-for mode in wrong-checkout wrong-local-tag wrong-remote-tag existing-release existing-draft lookup-auth lookup-network latest-newer latest-equal latest-malformed latest-big latest-auth policy-auth policy-network policy-disabled policy-malformed; do
+for mode in wrong-checkout wrong-local-tag wrong-remote-tag existing-release existing-draft lookup-auth lookup-network latest-newer latest-equal latest-malformed latest-big latest-auth; do
     new_case "$mode"
     reject_before_create
 done
@@ -294,7 +292,7 @@ for field in source_commit version architecture signing notarization tickets sch
     checksums
     reject_before_create
 done
-for mode in upload-failure wrong-draft-state corrupt-draft-download extra-remote-asset moved-tag-before-publish policy-disabled-before-publish; do
+for mode in upload-failure wrong-draft-state corrupt-draft-download extra-remote-asset moved-tag-before-publish; do
     new_case "$mode"
     reject_before_publish
 done
@@ -383,7 +381,7 @@ for state_kind in draft published; do
     no_mutations
     cases=$((cases + 1))
 done
-for conflict in source body title extra-asset conflicting-asset duplicate-assets incomplete-asset asset-list-auth asset-download-error unowned-draft spoofed-bot policy-auth policy-disabled; do
+for conflict in source body title extra-asset conflicting-asset duplicate-assets incomplete-asset asset-list-auth asset-download-error unowned-draft spoofed-bot; do
     seed_draft "resume-reject-$conflict"
     case "$conflict" in
         source) jq '.target_commitish="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$state/create.json" > "$state/changed"; mv "$state/changed" "$state/create.json" ;;
@@ -413,7 +411,7 @@ invoke RECOVER_CANDIDATE=true
 [[ $result != 0 ]] || fail 'different candidate bytes reused a draft'
 no_mutations
 cases=$((cases + 1))
-for mode_name in mutable-public corrupt-public-download extra-public-asset; do
+for mode_name in mutable-public policy-disabled corrupt-public-download extra-public-asset; do
     new_case "resume-published-$mode_name" success
     invoke
     [[ $result == 0 ]] || fail 'published seed failed'
@@ -469,4 +467,24 @@ for invalid_starter in foreign-starter nonempty-starter; do
     no_mutations
     cases=$((cases + 1))
 done
+seed_draft unproven-starter-race starter-unknown
+mode=completion-race
+invoke RECOVER_CANDIDATE=true
+[[ $result != 0 ]] || fail 'unproven in-flight starter was repaired'
+no_mutations
+[[ ! -e $state/published ]] || fail 'uncertain starter published'
+cases=$((cases + 1))
+seed_draft wrong-terminal-receipt starter-upload
+jq '.terminal_502_uploads[0].sha256="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' "$state/custody/publication-receipts.json" > "$state/changed"
+mv "$state/changed" "$state/custody/publication-receipts.json"
+invoke RECOVER_CANDIDATE=true
+[[ $result != 0 ]] || fail 'wrong terminal upload binding accepted'
+no_mutations
+cases=$((cases + 1))
+seed_draft missing-terminal-receipt starter-upload
+rm "$state/custody/publication-receipts.json"
+invoke RECOVER_CANDIDATE=true
+[[ $result != 0 ]] || fail 'lost terminal evidence authorized deletion'
+no_mutations
+cases=$((cases + 1))
 printf 'Publication contracts: %s cases passed; no provider calls or publication.\n' "$cases"

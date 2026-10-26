@@ -32,4 +32,16 @@ if PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" build "$work/extr
 cp "$work/original.zip" "$FIXTURE_ZIP"
 digest=$(shasum -a 256 < "$FIXTURE_ZIP"); export FIXTURE_DIGEST="sha256:${digest%% *}"
 if PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" checkpoint "$work/wrong-kind" >/dev/null 2>&1; then exit 1; fi
-printf '5 immutable artifact download contracts passed (synthetic only).\n'
+mkdir "$work/publication-payload"
+printf '{"receipt":"fixture"}\n' > "$work/publication-payload/publication-receipts.json"
+rm "$FIXTURE_ZIP"
+(cd "$work/publication-payload" && zip -q "$FIXTURE_ZIP" publication-receipts.json)
+digest=$(shasum -a 256 < "$FIXTURE_ZIP"); export FIXTURE_DIGEST="sha256:${digest%% *}"
+PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" publication "$work/publication-restored"
+cmp "$work/publication-payload/publication-receipts.json" "$work/publication-restored/publication-receipts.json"
+rm "$FIXTURE_ZIP"
+printf 'unexpected' > "$work/publication-payload/unexpected.json"
+(cd "$work/publication-payload" && zip -q "$FIXTURE_ZIP" unexpected.json)
+digest=$(shasum -a 256 < "$FIXTURE_ZIP"); export FIXTURE_DIGEST="sha256:${digest%% *}"
+if PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" publication "$work/unexpected-receipt" >/dev/null 2>&1; then exit 1; fi
+printf '7 immutable artifact download contracts passed (synthetic only).\n'

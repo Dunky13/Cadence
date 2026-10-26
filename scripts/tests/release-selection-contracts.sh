@@ -85,4 +85,6 @@ reset_case; export OFF_MAIN=true; invoke; check 'source no longer on main' 1; un
 reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401) ] | .[0].artifacts[0].expired=true'; invoke; check 'newest valid custody supersedes expired older checkpoint' 0
 grep -q 'checkpoint_id=401' "$work/output"
 reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401 | .expired=true) ]'; invoke; check 'newest expired custody never falls back' 1
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [(.[0].artifacts[0] | .id=450 | .name="Cadence-Publication-100-300-200-1" | .digest="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")]'; invoke; check 'publication receipt custody restored by trusted exact ID' 0
+grep -q 'publication_checkpoint_id=450' "$work/output"
 printf '%s release-selection contracts passed (synthetic only).\n' "$cases"

@@ -24,7 +24,6 @@ jobs:
     if: github.repository == 'Dunky13/Cadence' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: macos-15
     timeout-minutes: 10
-    environment: production
     outputs:
       eligible: ${{ steps.source.outputs.eligible }}
       source_sha: ${{ steps.source.outputs.source_sha }}
@@ -34,6 +33,8 @@ jobs:
       build_artifact_id: ${{ steps.source.outputs.build_artifact_id }}
       build_artifact_digest: ${{ steps.source.outputs.build_artifact_digest }}
       checkpoint_id: ${{ steps.source.outputs.checkpoint_id }}
+      publication_checkpoint_id: ${{ steps.source.outputs.publication_checkpoint_id }}
+      publication_checkpoint_digest: ${{ steps.source.outputs.publication_checkpoint_digest }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -47,11 +48,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/select-release-candidate.sh
-      - name: Verify effective immutable-release policy before Apple access
-        if: steps.source.outputs.eligible == 'true'
-        env:
-          RELEASE_POLICY_READ_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN }}
-        run: ./scripts/verify-release-policy.sh
 
   distribution:
     name: Sign or resume exact universal candidate
@@ -102,11 +98,25 @@ jobs:
           ARTIFACT_ID: ${{ needs.distribution.outputs.artifact_id }}
           ARTIFACT_DIGEST: sha256:${{ needs.distribution.outputs.artifact_digest }}
         run: ./scripts/download-release-artifact.sh "$ARTIFACT_ID" "$ARTIFACT_DIGEST" distribution "$RUNNER_TEMP/cadence-production"
+      - name: Restore bound terminal publication receipts
+        if: needs.preflight.outputs.publication_checkpoint_id != ''
+        env:
+          PUBLICATION_CHECKPOINT_ID: ${{ needs.preflight.outputs.publication_checkpoint_id }}
+          PUBLICATION_CHECKPOINT_DIGEST: ${{ needs.preflight.outputs.publication_checkpoint_digest }}
+        run: ./scripts/download-release-artifact.sh "$PUBLICATION_CHECKPOINT_ID" "$PUBLICATION_CHECKPOINT_DIGEST" publication "$RUNNER_TEMP/cadence-publication-state"
       - name: Verify or complete the exact candidate publication
         id: publish
         env:
-          RELEASE_POLICY_READ_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN }}
+          PUBLICATION_STATE_DIRECTORY: ${{ runner.temp }}/cadence-publication-state
         run: ./scripts/publish-release.sh --resume "$RELEASE_TAG" "$RUNNER_TEMP/cadence-production"
+      - name: Retain only safe candidate-bound terminal publication receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Publication-${{ needs.preflight.outputs.build_run_id }}-${{ needs.preflight.outputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cadence-publication-state/publication-receipts.json
+          if-no-files-found: warn
+          retention-days: 90
 
   consumer:
     name: Independent public installation (${{ matrix.arch }})

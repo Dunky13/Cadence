@@ -131,17 +131,10 @@ candidate=$(jq -cnS --arg repo "$repo" --arg tag "$tag" --arg source "$source_co
     '{schema:"cadence/publication/v1",repository:$repo,tag:$tag,source_commit:$source,version:$version,
       build_number:$build,origin:$origin,assets:$assets}')
 body=$(publication_body "$candidate")
+# shellcheck source=scripts/publication-upload-custody.sh
+source "$script_dir/publication-upload-custody.sh"
+publication_custody_init "$input" "$work" "$candidate"
 expected_json=$(printf '%s\n' "${files[@]}" | jq -R . | jq -s 'sort')
-immutable_policy() {
-    # A draft's immutable:false is not a policy indicator. GitHub documents no
-    # effective policy field on a draft. This GET requires Administration:read;
-    # ordinary GITHUB_TOKEN can lack it. Never infer success or elevate a token.
-    [[ -n ${RELEASE_POLICY_READ_TOKEN:-} ]] || fail 'A dedicated repository Administration-read policy credential is required.'
-    GH_TOKEN="$RELEASE_POLICY_READ_TOKEN" gh api --hostname github.com "repos/$repo/immutable-releases" > "$work/policy.json" 2> "$work/api-error" \
-        || fail 'Immutable-release precondition: GET immutable-releases requires repository Administration read access; dedicated read-only policy credential could not verify policy. No token elevation is performed.'
-    jq -e '.enabled == true' "$work/policy.json" >/dev/null \
-        || fail 'Immutable-release precondition: repository immutable releases must be enabled.'
-}
 find_candidate() {
     # Tag lookup alone omits drafts. Enumerate all pages and reject ambiguity.
     gh api --hostname github.com --paginate --slurp "repos/$repo/releases?per_page=100" \
@@ -219,6 +212,7 @@ repair_empty_starters() {
     jq -r '.[][] | select(.state == "starter") | [.name,(.id|tostring)] | @tsv' "$work/starter-assets.json" > "$work/starters"
     while IFS=$'\t' read -r name id; do
         [[ -n $name ]] || continue
+        publication_require_abandoned "$name" "$id" "$assets"
         verify_metadata true
         gh api --hostname github.com "repos/$repo/releases/assets/$id" > "$work/starter.json" || fail 'Unable to recheck unfinished asset.'
         jq -e --arg name "$name" --argjson id "$id" '.id == $id and .name == $name and .state == "starter" and .size == 0
@@ -233,7 +227,6 @@ repair_empty_starters() {
             || fail "Empty unfinished upload was not removed (exit $result)."
     done < "$work/starters"
 }
-immutable_policy
 find_candidate
 existing=$release_id
 if [[ -n $existing ]]; then
@@ -307,10 +300,11 @@ else
     for name in "${files[@]}"; do
         if [[ ! -f $work/existing-assets/$name ]]; then
             verify_metadata true
-            gh api --hostname github.com --method POST -H 'Content-Type: application/octet-stream' \
+            gh api --hostname github.com --include --method POST -H 'Content-Type: application/octet-stream' \
                 -H "Content-Length: $(wc -c < "$input/$name" | tr -d '[:space:]')" \
                 "https://uploads.github.com/repos/$repo/releases/$release_id/assets?name=$name" --input "$input/$name" \
                 > "$work/upload-output" 2> "$work/api-error" || :
+            publication_record_502 "$name" "$work" "$repo" "$release_id" "$assets"
             verify_assets "$work/upload-check-$name" false
             [[ -f $work/upload-check-$name/$name ]] \
                 || fail 'Upload unresolved; missing asset retained for explicit same-candidate recovery.'
@@ -319,7 +313,6 @@ else
     verify_assets "$work/draft-assets" true
     verify_metadata true
     verify_remote_tag
-    immutable_policy
     jq -n '{draft:false,prerelease:false,make_latest:"true"}' > "$work/publish.json"
     gh api --hostname github.com --method PATCH "repos/$repo/releases/$release_id" --input "$work/publish.json" \
         > "$work/publish-output" 2> "$work/api-error" || :

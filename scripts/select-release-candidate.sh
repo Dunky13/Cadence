@@ -19,7 +19,7 @@ jq -e 'type == "array" and all(.[]; (.artifacts | type == "array"))' "$work/arti
 jq --argjson repo_id "$repo_id" '[.[].artifacts[] | select(.workflow_run.head_branch == "main" and .workflow_run.head_repository_id == $repo_id)] | sort_by(.id)' "$work/artifacts.json" > "$work/all.json"
 # Artifact names carry no authority. Validate their owning workflow, including
 # completion markers, before they can affect candidate selection.
-jq '[.[] | select(.name | test("^Cadence-(Checkpoint|Published)-"))]' "$work/all.json" > "$work/named.json"
+jq '[.[] | select(.name | test("^Cadence-(Checkpoint|Published|Publication)-"))]' "$work/all.json" > "$work/named.json"
 printf '[]\n' > "$work/trusted.json"
 jq -c '.[]' "$work/named.json" > "$work/named-lines"
 while IFS= read -r item; do
@@ -154,3 +154,9 @@ emit build_number "$(jq -r .run_number "$work/ci.json")"
 emit build_artifact_id "$artifact"
 emit build_artifact_digest "$(jq -r '.[0].digest' "$work/match.json")"
 emit checkpoint_id "$checkpoint_id"
+publication_entry=$(jq -c --arg prefix "Cadence-Publication-$build_run-$artifact-" '[.[] | select(.name | startswith($prefix))] | last // empty' "$work/all.json")
+if [[ -n $publication_entry ]]; then
+    [[ $(jq -r .expired <<< "$publication_entry") == false ]] || fail 'Newest publication receipts expired; no destructive recovery is allowed.'
+    emit publication_checkpoint_id "$(jq -r .id <<< "$publication_entry")"
+    emit publication_checkpoint_digest "$(jq -r .digest <<< "$publication_entry")"
+fi
