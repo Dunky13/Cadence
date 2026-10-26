@@ -13,28 +13,31 @@ release_automation_ci() (
     # A separate process owns private API scratch and cleanup; do not replace the
     # phase driver's traps. Discover a run, then recheck its exact ID and jobs.
     set -euo pipefail
-    local work run
-    work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-automation-origin.XXXXXX") || fail 'Cannot create automation CI scratch.'
-    trap 'rm -rf "$work"' EXIT
-    gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$AUTOMATION_COMMIT&branch=main&event=push&status=success&per_page=100" > "$work/runs.json" \
+    local run
+    # A failing function can unwind locals before EXIT runs on Bash 3.2. This
+    # variable belongs only to this subshell and remains available to cleanup.
+    cadence_automation_ci_work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-automation-origin.XXXXXX") || fail 'Cannot create automation CI scratch.'
+    cadence_automation_ci_exit=0
+    trap 'cadence_automation_ci_exit=$?; trap - EXIT; rm -rf -- "$cadence_automation_ci_work" || cadence_automation_ci_exit=1; exit "$cadence_automation_ci_exit"' EXIT
+    gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$AUTOMATION_COMMIT&branch=main&event=push&status=success&per_page=100" > "$cadence_automation_ci_work/runs.json" \
         || fail 'Cannot query automation CI runs.'
     run=$(jq -er --arg sha "$AUTOMATION_COMMIT" --arg repo "$GITHUB_REPOSITORY" '
         [.[].workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push"
           and .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success"
           and .repository.full_name == $repo and .head_repository.full_name == $repo)]
-        | sort_by(.id) | last | .id | select(type == "number" and . > 0 and . == floor)' "$work/runs.json") \
+        | sort_by(.id) | last | .id | select(type == "number" and . > 0 and . == floor)' "$cadence_automation_ci_work/runs.json") \
         || fail 'Automation commit has no passed main-push CI run.'
     [[ $run =~ ^[1-9][0-9]*$ ]] || fail 'Automation CI run ID is malformed.'
-    gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "$work/run.json" || fail 'Cannot recheck exact automation CI run.'
+    gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "$cadence_automation_ci_work/run.json" || fail 'Cannot recheck exact automation CI run.'
     jq -e --arg sha "$AUTOMATION_COMMIT" --arg repo "$GITHUB_REPOSITORY" --argjson run "$run" '
         .id == $run and .head_sha == $sha and .head_branch == "main" and .event == "push"
         and .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success"
-        and .repository.full_name == $repo and .head_repository.full_name == $repo' "$work/run.json" >/dev/null \
+        and .repository.full_name == $repo and .head_repository.full_name == $repo' "$cadence_automation_ci_work/run.json" >/dev/null \
         || fail 'Automation CI run is untrusted or unsuccessful.'
-    gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" > "$work/jobs.json" \
+    gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" > "$cadence_automation_ci_work/jobs.json" \
         || fail 'Cannot query automation CI aggregate.'
     jq -e '[.[].jobs[] | select(.name == "ci-required")] | length == 1 and all(.[];
-        .status == "completed" and .conclusion == "success")' "$work/jobs.json" >/dev/null \
+        .status == "completed" and .conclusion == "success")' "$cadence_automation_ci_work/jobs.json" >/dev/null \
         || fail 'Exact automation ci-required aggregate did not pass.'
 )
 
