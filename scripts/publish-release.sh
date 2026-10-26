@@ -165,10 +165,16 @@ verify_metadata() {
         || fail 'Unable to read release metadata.'
     publication_binding "$work/release.json" "$repo" "$build" "$origin" "$tag" "$version" "$source_commit" \
         || fail 'Release identity, ownership or candidate binding changed.'
+    # Drafts can use GitHub's observed opaque untagged route. Identity stays
+    # bound above; a published release must still have its exact stable URL.
     jq -e --arg body "$body" --arg url "https://github.com/$repo/releases/tag/$tag" \
+        --arg draft_prefix "https://github.com/$repo/releases/tag/untagged-" \
         --argjson id "$release_id" --argjson draft "$draft" '
-        .id == $id and .body == $body and .html_url == $url and .draft == $draft
-        and (if $draft then .immutable == false else .immutable == true end)' "$work/release.json" >/dev/null \
+        .id == $id and .body == $body and .draft == $draft and (.html_url | type == "string")
+        and (if $draft then .immutable == false and
+            (.html_url == $url or (.html_url | startswith($draft_prefix)
+                and (ltrimstr($draft_prefix) | length == 20 and test("^[0-9a-f]{20}$"))))
+            else .immutable == true and .html_url == $url end)' "$work/release.json" >/dev/null \
         || fail 'Release metadata/state changed or published release is not immutable.'
 }
 verify_assets() {
