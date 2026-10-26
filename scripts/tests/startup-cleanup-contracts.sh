@@ -49,7 +49,12 @@ for shell_mode in -e +e; do
             : > "$fixture/signals"
             cat > "$fixture/driver.sh" <<'DRIVER'
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
+if [[ $FIXTURE_SHELL_MODE == -e ]]; then
+    [[ $- == *e* ]] || { printf 'Requested -e was not preserved.\n' >&2; exit 98; }
+else
+    [[ $- != *e* ]] || { printf 'Requested +e was not preserved.\n' >&2; exit 98; }
+fi
 kill() { printf '%s\n' "$*" >> "$FIXTURE/signals"; }
 app=$FIXTURE_APP
 work=$FIXTURE_SCRATCH
@@ -60,7 +65,7 @@ exit "$FIXTURE_STATUS"
 DRIVER
             result=0
             PATH="$work/bin:$PATH" FIXTURE="$fixture" FIXTURE_APP="$app" FIXTURE_SCRATCH="$scratch" \
-                FIXTURE_CLEANUP="$work/cleanup.sh" FIXTURE_STATUS="$original_status" \
+                FIXTURE_CLEANUP="$work/cleanup.sh" FIXTURE_STATUS="$original_status" FIXTURE_SHELL_MODE="$shell_mode" \
                 /bin/bash "$shell_mode" "$fixture/driver.sh" > "$fixture/log" 2>&1 || result=$?
             [[ $result == "$original_status" ]] || { cat "$fixture/log" >&2; exit 1; }
             printf '1101\n1102\n' > "$fixture/expected-signals"

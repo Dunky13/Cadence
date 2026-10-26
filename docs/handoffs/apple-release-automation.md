@@ -56,6 +56,8 @@ A separate local retained-installer probe on macOS27.0.1/arm64 passed actual tic
 
 Local checks passed 108 publication, eight startup-cleanup and20 release-recovery contracts plus ShellCheck, Bash3.2 syntax, actionlint and whitespace checks. These are synthetic/source checks. The repairs still require exact-head CI/source review and a successful tested-main automation owner before live continuation. The existing draft, original submitted bytes and both Accepted UUIDs must be reused.
 
+Independent review at `911f961141627d873e12d0107dedd5c273d85400` found one P3 in the cleanup test driver: it re-enabled errexit, so its requested `+e` cases were not distinct. Root added an in-driver assertion that reproduced the missing mode, then preserved the requested mode while retaining nounset/pipefail. All eight cases now pass with the actual mode asserted. The reviewer reported no P0–P2 production finding and passed 22 focused URL/state probes. The original P3 verdict and targeted root closure remain separate; no independent re-review is claimed.
+
 ## Recovery and remaining work
 
 Use a fresh scheduled or no-input dispatch owner after the repair's successful exact main CI; do not rerun stale GitHub jobs. Attempts greater than one are rejected before credentials/network work. Restore current immutable custody, both existing UUIDs and original submitted bytes. An ambiguous upload remains held for UUID/history reconciliation; missing history or expired custody never authorizes resubmission. Ninety-day retention applies.
