@@ -66,6 +66,8 @@ Each v2 receipt binds source, bundle, version/build, architecture, team, origin 
 
 Raw notary client output and signing keys are outside the checkpoint allowlist. Safe receipts and diagnostic logs are retained on failure. Stapling changes bytes: submitted hashes are distinct from final download hashes. No phase strips quarantine or disables Gatekeeper.
 
+Ticket validation uses `scripts/validate-apple-ticket.sh`. It permits at most three actual `xcrun stapler validate` attempts, separated by two-second delays, only for exit 68 with the observed `NSURLErrorDomain Code=-1005` connection loss and exact Apple production ticket-delivery CloudKit lookup URL. Each attempt's diagnostics remain visible; interrupted replay may repeat a stream to retain both streams before cleanup. Success requires a real validation exit 0 and verified scratch cleanup; other failures stop immediately and exhausted retries retain the failure. Stapling mutations and notarization submissions are not retried by this wrapper.
+
 ## Transactional publication and consumer proof
 
 Publication custody requires `PUBLICATION_STATE_DIRECTORY` outside the distribution payload. The workflow owns its durable upload/restore. A standalone operator must preserve that directory before retrying. Unbound or missing terminal failure evidence never authorizes deleting an uncertain upload.

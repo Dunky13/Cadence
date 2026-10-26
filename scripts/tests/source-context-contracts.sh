@@ -98,6 +98,15 @@ cat > "$work/bin/xcrun" <<'STUB'
 #!/bin/bash
 if [[ $* == *-archs* ]]; then printf 'arm64 x86_64\n'; fi
 STUB
+cat > "$work/bin/rm" <<'STUB'
+#!/bin/bash
+if [[ ${CONTEXT_MODE:-} == cleanup-error ]]; then
+    for argument in "$@"; do
+        case $argument in "$TMPDIR"/cadence-automation-origin.*) exit 73 ;; esac
+    done
+fi
+exec /bin/rm "$@"
+STUB
 chmod +x "$work/bin/"*
 export PATH="$work/bin:$PATH" CONTEXT_CALLS="$work/calls" CONTEXT_MODE=passed
 export SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AUTOMATION_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -105,11 +114,18 @@ export RELEASE_SOURCE_DIRECTORY="$work/automation/.release-source" GITHUB_SHA=$A
 export GITHUB_REPOSITORY=Dunky13/Cadence GITHUB_REF=refs/heads/main GITHUB_REF_TYPE=branch GITHUB_RUN_ATTEMPT=1
 export BUILD_CI_RUN_ID=101 BUILD_ARTIFACT_ID=202 BUILD_NUMBER=15
 export BUILD_ARTIFACT_DIGEST=sha256:018949eab48217c2136ef238c009b00eda6b2daa6e8bde55a31f96d0fd421e37
+mkdir "$work/api-scratch"
+export TMPDIR="$work/api-scratch"
 cases=0
 invoke() {
     result=0
     : > "$CONTEXT_CALLS"
     "$@" > "$work/output" 2>&1 || result=$?
+    if [[ $CONTEXT_MODE != cleanup-error && -n $(find "$TMPDIR" -mindepth 1 -print -quit) ]]; then
+        printf 'FAIL automation CI scratch survived %s (exit %s)\n' "$CONTEXT_MODE" "$result" >&2
+        cat "$work/output" >&2
+        exit 1
+    fi
 }
 accept() { [[ $result == 0 ]] || { cat "$work/output" >&2; exit 1; }; cases=$((cases+1)); }
 reject() { [[ $result != 0 ]] || { printf 'FAIL accepted %s\n' "$CONTEXT_MODE" >&2; exit 1; }; cases=$((cases+1)); }
@@ -122,6 +138,11 @@ for mode in automation-head product-head automation-dirty product-dirty automati
     export CONTEXT_MODE=$mode
     invoke context; reject
 done
+export CONTEXT_MODE=passed
+export CONTEXT_MODE=cleanup-error
+invoke context; reject
+[[ -n $(find "$TMPDIR" -mindepth 1 -print -quit) ]] || exit 1
+/bin/rm -rf -- "${TMPDIR:?}/"*
 export CONTEXT_MODE=passed
 for binding in AUTOMATION_COMMIT RELEASE_SOURCE_DIRECTORY; do
     invoke env -u "$binding" /bin/bash "$work/automation/scripts/verify-ci-origin.sh"; reject

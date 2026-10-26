@@ -129,7 +129,7 @@ check_ready_app() {
         '.binding == $binding and .app_tree_sha256 == $tree' "$ready/prepared.json" >/dev/null || fail 'Stapled app bytes/binding changed.'
     check_app "$ready_app"
     check_team "$ready_app"
-    xcrun stapler validate "$ready_app"
+    "./scripts/validate-apple-ticket.sh" "$ready_app"
     spctl --assess --type execute --verbose=4 "$ready_app"
 }
 check_installer() {
@@ -173,7 +173,7 @@ case $phase in
             mkdir "$work/stapled-app"
             ditto --rsrc --extattr --qtn --acl "$signed_app" "$work/stapled-app/Cadence.app"
             xcrun stapler staple "$work/stapled-app/Cadence.app"
-            xcrun stapler validate "$work/stapled-app/Cadence.app"
+            "./scripts/validate-apple-ticket.sh" "$work/stapled-app/Cadence.app"
             check_app "$work/stapled-app/Cadence.app"
             check_team "$work/stapled-app/Cadence.app"
             spctl --assess --type execute --verbose=4 "$work/stapled-app/Cadence.app"
@@ -216,7 +216,7 @@ case $phase in
             # Staple a separate copy: never change the bytes named in the receipt.
             ditto --rsrc --extattr --qtn --acl "$dmg" "$work/distribution/$dmg_name"
             xcrun stapler staple "$work/distribution/$dmg_name"
-            xcrun stapler validate "$work/distribution/$dmg_name"
+            "./scripts/validate-apple-ticket.sh" "$work/distribution/$dmg_name"
             codesign --verify --strict "$work/distribution/$dmg_name"
             check_team "$work/distribution/$dmg_name"
             spctl --assess --type open --context context:primary-signature --verbose=4 "$work/distribution/$dmg_name"

@@ -94,7 +94,7 @@ jobs:
         env:
           CHECKPOINT_ID: ${{ inputs.checkpoint_id }}
         run: |
-          [[ "$CHECKPOINT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CHECKPOINT_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
           CHECKPOINT_DIGEST=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CHECKPOINT_ID" --jq .digest)
           ./scripts/download-release-artifact.sh "$CHECKPOINT_ID" "$CHECKPOINT_DIGEST" checkpoint "$RUNNER_TEMP/cadence-checkpoint"
           ./scripts/checkpoint-state.sh restore "$STATE_DIRECTORY" "$RUNNER_TEMP/cadence-checkpoint"
@@ -103,7 +103,7 @@ jobs:
         if: inputs.checkpoint_id != ''
         run: |
           if [[ ! -e "$STATE_DIRECTORY/prepared-app" ]]; then
-            [[ ! -e "$STATE_DIRECTORY/evidence/app-universal-receipt.json" ]]
+            [[ ! -e "$STATE_DIRECTORY/evidence/app-universal-receipt.json" ]] || exit 1
             ./scripts/download-release-artifact.sh "$BUILD_ARTIFACT_ID" "$BUILD_ARTIFACT_DIGEST" build "$RUNNER_TEMP/cadence-unsigned"
             ./scripts/verify-release-input.sh "$RUNNER_TEMP/cadence-unsigned" "$RUNNER_TEMP/cadence-verified"
           fi
@@ -454,8 +454,8 @@ jobs:
       - name: Promote only after credentials have been removed
         if: steps.finish.outputs.ready == 'true'
         run: |
-          [[ -d dist/.signed-candidate && ! -L dist/.signed-candidate ]]
-          [[ ! -e dist/release && ! -L dist/release ]]
+          [[ -d dist/.signed-candidate && ! -L dist/.signed-candidate ]] || exit 1
+          [[ ! -e dist/release && ! -L dist/release ]] || exit 1
           (cd dist/.signed-candidate && shasum -a 256 --check SHA256SUMS)
           jq -e --arg commit "$SOURCE_COMMIT" '.schema == "cadence/distribution/v1" and .source_commit == $commit and .architecture == "universal" and .notarization == "Accepted" and .tickets == "stapled and validated"' dist/.signed-candidate/distribution.json
           mv dist/.signed-candidate dist/release

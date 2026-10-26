@@ -35,7 +35,7 @@ ditto -x -k "$directory/$app_name" "$work"
 [[ -d $work/Cadence.app && ! -L $work/Cadence.app ]] || fail 'Final app ZIP is missing the app.'
 [[ $(apple_tree_sha "$work/Cadence.app") == "$(apple_tree_sha "$expected_app")" ]] || fail 'Final ZIP app differs from the retained stapled app.'
 codesign --verify --deep --strict --all-architectures "$work/Cadence.app"
-xcrun stapler validate "$work/Cadence.app"
+"$(dirname "$0")/validate-apple-ticket.sh" "$work/Cadence.app"
 spctl --assess --type execute --verbose=4 "$work/Cadence.app"
 "$script_dir/check-dmg.sh" "$directory/$dmg_name" --architecture "$(jq -r .architecture <<< "$binding")" \
     --version "$(jq -r .version <<< "$binding")" --release --launch-demo
