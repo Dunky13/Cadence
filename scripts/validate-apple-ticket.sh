@@ -12,14 +12,19 @@ work=''
 output_pending=false
 replay_output() {
     local replay_status=0
-    output_pending=false
     cat "$work/stdout" || replay_status=1
     cat "$work/stderr" >&2 || replay_status=1
+    output_pending=false
     return "$replay_status"
 }
 cleanup() {
     result=$?
-    trap - EXIT HUP INT TERM
+    trap - EXIT
+    # Finish replay/removal if another handled signal arrives during cleanup.
+    # Preserve an existing failure; a signal must still turn success into failure.
+    trap 'if [[ $result == 0 ]]; then result=129; fi' HUP
+    trap 'if [[ $result == 0 ]]; then result=130; fi' INT
+    trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
     # A handled signal can arrive while waiting for xcrun. Retain its captured
     # diagnostics before removing scratch, just as on a normal child failure.
     if [[ $output_pending == true ]] && ! replay_output; then

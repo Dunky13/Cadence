@@ -77,6 +77,7 @@ case ${FIXTURE_CLEANUP:-ok} in
     fail) exit 73 ;;
     noop) exit 0 ;;
     remove-then-fail) /bin/rm "$@"; exit 73 ;;
+    signal) kill -s "$FIXTURE_SIGNAL" "$PPID" ;;
 esac
 exec /bin/rm "$@"
 STUB
@@ -84,6 +85,8 @@ cat > "$work/bin/cat" <<'STUB'
 #!/bin/bash
 case ${FIXTURE_REPLAY:-ok}:$1 in
     fail:*/cadence-ticket-validation.*/stdout) exit 74 ;;
+    signal-stdout:*/cadence-ticket-validation.*/stdout|signal-stderr:*/cadence-ticket-validation.*/stderr)
+        kill -s "$FIXTURE_SIGNAL" "$PPID" ;;
 esac
 exec /bin/cat "$@"
 STUB
@@ -226,6 +229,25 @@ for shell_mode in -e +e; do
             attempts_are 1
             if [[ $at == sleep ]]; then count_is sleeps 1; else count_is sleeps 0; fi
             passed
+        done
+        for outcome in success unmarked; do
+            for stream in stdout stderr; do
+                new_case "$shell_mode-$signal_name-during-$stream-$outcome"
+                export FIXTURE_SIGNAL=$signal_name FIXTURE_MODE=$outcome FIXTURE_REPLAY="signal-$stream"
+                invoke; expect "$signal_status"
+                attempts_are 1; count_is sleeps 0
+                if [[ $outcome == success ]]; then
+                    grep -qx 'The validate action worked!' "$state/stdout" || fail 'Captured success output lost on signal'
+                else
+                    grep -qx 'Unclassified validation failure' "$state/stderr" || fail 'Captured failure diagnostic lost on signal'
+                fi
+                passed
+            done
+            new_case "$shell_mode-$signal_name-during-cleanup-$outcome"
+            export FIXTURE_SIGNAL=$signal_name FIXTURE_MODE=$outcome FIXTURE_CLEANUP=signal
+            invoke
+            if [[ $outcome == success ]]; then expect "$signal_status"; else expect 68; fi
+            attempts_are 1; count_is sleeps 0; passed
         done
     done
 done
