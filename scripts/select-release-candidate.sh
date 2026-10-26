@@ -29,11 +29,21 @@ while IFS= read -r item; do
         .path == ".github/workflows/release.yml" and .head_branch == "main"
         and .repository.full_name == $repo and .head_repository.id == $repo_id
         and (.event == "workflow_run" or .event == "schedule" or .event == "workflow_dispatch")' "$work/owner-$owner.json" >/dev/null; then
-        jq --argjson item "$item" '. + [$item]' "$work/trusted.json" > "$work/trusted.tmp"
+        order=$(jq -er '.run_number | select(type == "number" and . > 0 and . == floor)' "$work/owner-$owner.json") \
+            || fail 'Missing trusted producer run order.'
+        jq -e '.created_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")' <<< "$item" >/dev/null \
+            || fail 'Missing artifact creation timestamp.'
+        jq --argjson item "$item" --argjson order "$order" '. + [$item + {custody_owner_order:$order}]' "$work/trusted.json" > "$work/trusted.tmp"
         mv "$work/trusted.tmp" "$work/trusted.json"
     fi
 done < "$work/named-lines"
-mv "$work/trusted.json" "$work/all.json"
+# IDs are opaque: real hosted uploads have returned nonchronological IDs. Use
+# provider timestamps, producer run order, and the explicit phase sequence.
+jq '["prepare","app-claim","app-submit","app-wait","installer-prepare","installer-claim","installer-submit","installer-wait","finish"] as $phases |
+    map(. + {custody_phase_order:(if (.name | startswith("Cadence-Checkpoint-")) then
+        (.name | split("-") | .[6:] | join("-")) as $phase | ($phases | index($phase)) else -1 end)}) |
+    if any(.[]; .custody_phase_order == null) then error("Unknown checkpoint phase") else
+    sort_by([.created_at,.custody_owner_order,.custody_phase_order]) end' "$work/trusted.json" > "$work/all.json"
 # A completed marker is advisory only for queue selection. Publication independently
 # reconciles exact public bytes, tag and immutable state after a lost response.
 jq -r '.[] | select(.name | test("^Cadence-Checkpoint-[0-9]+-[0-9]+-[0-9]+-[0-9]+-[a-z-]+$")) |

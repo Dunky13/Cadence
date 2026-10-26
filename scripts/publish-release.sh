@@ -22,7 +22,9 @@ repo=${GITHUB_REPOSITORY:-}
 [[ -n ${GH_TOKEN:-${GITHUB_TOKEN:-}} ]] || fail 'A GitHub publication token is required.'
 [[ ${GH_HOST:-github.com} == github.com ]] || fail 'This release flow targets github.com.'
 for tool in gh git jq shasum cmp plutil; do command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"; done
-[[ $(git rev-parse --verify HEAD) == "$source_commit" ]] || fail 'Checkout differs from the selected source commit.'
+# shellcheck source=scripts/release-source-context.sh
+source "$script_dir/release-source-context.sh"
+release_source_context "$source_commit" "$script_dir/.."
 if [[ -z ${RELEASE_TAG:-} ]]; then
     [[ $(git rev-parse --verify "refs/tags/$tag^{commit}") == "$source_commit" ]] || fail 'Local tag differs from the selected source commit.'
 fi
@@ -64,9 +66,9 @@ validate_payload() {
 }
 validate_payload "$input"
 build=$(jq -r .build_number "$input/distribution.json")
-[[ $(plutil -extract CFBundleShortVersionString raw "$script_dir/../Resources/Info.plist") == "$version" ]] \
+[[ $(plutil -extract CFBundleShortVersionString raw "$release_source_directory/Resources/Info.plist") == "$version" ]] \
     || fail 'Selected version differs from the source app version.'
-[[ ${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw "$script_dir/../Resources/Info.plist")} == "$build" ]] \
+[[ ${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw "$release_source_directory/Resources/Info.plist")} == "$build" ]] \
     || fail 'Selected build differs from the source app build.'
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-publish.XXXXXX")
 release_id=''

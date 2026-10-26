@@ -26,11 +26,13 @@ fi
 [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail 'Production tags must use vMAJOR.MINOR.PATCH.'
 [[ $commit =~ ^[0-9a-f]{40}$ ]] || fail 'A full workflow commit SHA is required.'
 [[ $repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail 'GITHUB_REPOSITORY is required.'
-[[ $(git rev-parse --verify HEAD) == "$commit" ]] || fail 'Checkout differs from the workflow commit.'
+# shellcheck source=scripts/release-source-context.sh
+source "$script_dir/release-source-context.sh"
+release_source_context "$commit" "$script_dir/.."
 if [[ -z $mode ]]; then
     [[ $(git rev-parse --verify "refs/tags/$tag^{commit}") == "$commit" ]] || fail 'Local tag differs from the selected commit.'
 fi
-version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
+version=$(plutil -extract CFBundleShortVersionString raw "$release_source_directory/Resources/Info.plist")
 [[ $tag == "v$version" ]] || fail 'Tag does not match the app version in Resources/Info.plist.'
 # Fetch current main without changing the checkout or persisting credentials.
 git fetch --no-tags origin main
@@ -74,7 +76,7 @@ if [[ $count != 0 ]]; then
     source "$script_dir/publication-candidate.sh"
     source_commit=$commit
     origin=$(publication_origin)
-    build=${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw Resources/Info.plist)}
+    build=${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw "$release_source_directory/Resources/Info.plist")}
     publication_binding "$work/candidate.json" "$repository" "$build" "$origin" "$tag" "$version" "$source_commit" \
         || fail 'Draft is not an unambiguous automation-owned same-source/build/artifact candidate.'
     [[ -n $object ]] || fail 'A recovery draft requires its existing same-source remote tag.'

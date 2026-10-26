@@ -3,9 +3,10 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-release-contracts.XXXXXX")
+work=$(cd "$work" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin" "$work/repo/scripts" "$work/repo/Resources" "$work/provider"
-for script in release-macos.sh notarize-artifact.sh apple-stage-state.sh verify-apple-distribution.sh verify-apple-dmg-binding.sh package-dmg.sh check-dmg.sh verify-demo-startup.sh; do
+for script in release-source-context.sh release-macos.sh notarize-artifact.sh apple-stage-state.sh verify-apple-distribution.sh verify-apple-dmg-binding.sh package-dmg.sh check-dmg.sh verify-demo-startup.sh; do
     cp "$root/scripts/$script" "$work/repo/scripts/"
 done
 printf '{"CFBundleShortVersionString":"1.2.3","CFBundleVersion":"42"}\n' > "$work/repo/Resources/Info.plist"
@@ -18,7 +19,31 @@ printf '%s %s\n' "$tool" "$*" >> "$FIXTURE_CALLS"
 case $tool in
     uname) printf 'Darwin\n' ;;
     git)
-        case $1 in rev-parse) printf '%s\n' "$SOURCE_COMMIT" ;; status) [[ ${FIXTURE_MODE:-} != dirty ]] || printf ' M modified\n' ;; *) exit 91 ;; esac ;;
+        directory=$PWD
+        if [[ $1 == -C ]]; then directory=$2; shift 2; fi
+        case $1 in
+            rev-parse)
+                if [[ $2 == --show-toplevel ]]; then printf '%s\n' "$directory"
+                elif [[ -n ${AUTOMATION_COMMIT:-} && $directory == "$FIXTURE_AUTOMATION_ROOT" ]]; then printf '%s\n' "$AUTOMATION_COMMIT"
+                else printf '%s\n' "$SOURCE_COMMIT"; fi ;;
+            status) [[ ${FIXTURE_MODE:-} != dirty ]] || printf ' M modified\n' ;;
+            fetch|merge-base|ls-files) : ;;
+            *) exit 91 ;;
+        esac ;;
+    gh)
+        endpoint=''; for argument in "$@"; do endpoint=$argument; done
+        case $endpoint in
+            *workflows/ci.yml/runs\?*)
+                jq -n '[{workflow_runs:[{id:901,head_sha:env.AUTOMATION_COMMIT,head_branch:"main",event:"push",
+                    path:".github/workflows/ci.yml",status:"completed",conclusion:"success",
+                    repository:{full_name:env.GITHUB_REPOSITORY},head_repository:{full_name:env.GITHUB_REPOSITORY}}]}]' ;;
+            */runs/901)
+                jq -n '{id:901,head_sha:env.AUTOMATION_COMMIT,head_branch:"main",event:"push",
+                    path:".github/workflows/ci.yml",status:"completed",conclusion:"success",
+                    repository:{full_name:env.GITHUB_REPOSITORY},head_repository:{full_name:env.GITHUB_REPOSITORY}}' ;;
+            */runs/901/jobs\?*) printf '[{"jobs":[{"name":"ci-required","status":"completed","conclusion":"success"}]}]' ;;
+            *) exit 98 ;;
+        esac ;;
     plutil)
         key=$2 path=''; for argument in "$@"; do path=$argument; done
         jq -er --arg key "$key" '.[$key]' "$path" ;;
@@ -124,7 +149,7 @@ case $tool in
 esac
 STUB
 chmod +x "$work/bin/fake-tool"
-for name in uname git plutil lipo codesign ditto spctl hdiutil mount xcrun open sips; do ln -s fake-tool "$work/bin/$name"; done
+for name in uname git gh plutil lipo codesign ditto spctl hdiutil mount xcrun open sips; do ln -s fake-tool "$work/bin/$name"; done
 export PATH="$work/bin:$PATH" SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export BUILD_CI_RUN_ID=101 BUILD_ARTIFACT_ID=202 BUILD_ARTIFACT_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export APPLE_TEAM_ID=ABC1234567 GITHUB_RUN_ID=303 GITHUB_RUN_ATTEMPT=1 APPLE_NOTARY_TIMEOUT=1s
@@ -237,5 +262,41 @@ printf tamper >> "$state/prepared-app/"*.zip
 invoke prepare; expect 1
 invoke app-submit; expect 1
 [[ $(count 'notarytool submit') == 0 && $(count 'codesign --force') == 2 ]] || fail 'corrupt state regenerated/uploaded'
+passed
+# A checkpoint with no submitted bytes resumes using repaired automation, while
+# product metadata and installer instructions remain frozen. Changing automation
+# again after an Apple submission must preserve the receipt and submitted bytes.
+new_case split-source-empty-checkpoint-to-completion
+mkdir -p "$work/repo/.release-source/Resources" "$state/evidence"
+cp "$work/repo/Resources/"* "$work/repo/.release-source/Resources/"
+printf '{"CFBundleShortVersionString":"9.9.9","CFBundleVersion":"99"}\n' > "$work/repo/Resources/Info.plist"
+printf 'Wrong automation instructions\n' > "$work/repo/Resources/Install.txt"
+cp "$work/durable-all-phases/state/candidate.json" "$state/candidate.json"
+original_binding=$(shasum -a 256 "$state/candidate.json")
+export RELEASE_SOURCE_DIRECTORY="$work/repo/.release-source" FIXTURE_AUTOMATION_ROOT="$work/repo"
+export AUTOMATION_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb GITHUB_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+export GITHUB_REPOSITORY=Dunky13/Cadence GITHUB_REF=refs/heads/main GITHUB_REF_TYPE=branch
+invoke prepare; expect 0
+invoke app-claim; expect 0
+invoke app-submit; expect 0
+invoke app-wait pending; expect 75
+submitted_sha=$(shasum -a 256 "$state/prepared-app/"*.zip)
+receipt_sha=$(shasum -a 256 "$state/evidence/app-universal-receipt.json")
+prepared_signs=$(count 'codesign --force')
+export AUTOMATION_COMMIT=cccccccccccccccccccccccccccccccccccccccc GITHUB_SHA=cccccccccccccccccccccccccccccccccccccccc
+invoke prepare; expect 0
+invoke app-claim; expect 0
+invoke app-submit; expect 0
+[[ $(shasum -a 256 "$state/prepared-app/"*.zip) == "$submitted_sha" && $(shasum -a 256 "$state/evidence/app-universal-receipt.json") == "$receipt_sha" ]] || fail 'automation repair replaced submitted bytes or receipt'
+[[ $(count 'codesign --force') == "$prepared_signs" && $(count 'notarytool submit') == 1 ]] || fail 'automation repair resigned or resubmitted'
+invoke app-wait; expect 0
+invoke installer-prepare; expect 0
+[[ $(tar -xOf "$state/prepared-installer/"*.dmg './Install Cadence.txt') == 'Install fixture' ]] || fail 'installer used automation resources'
+invoke installer-claim; expect 0
+invoke installer-submit; expect 0
+invoke installer-wait; expect 0
+invoke finish; expect 0
+[[ $(shasum -a 256 "$state/candidate.json") == "$original_binding" ]] || fail 'candidate binding was rebased to automation'
+jq -e '.source_commit == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and .version == "1.2.3" and .build_number == "42"' "$output/distribution.json" >/dev/null || fail 'distribution followed automation identity'
 passed
 printf 'Apple release recovery: %s cases passed; fake tools only.\n' "$cases"

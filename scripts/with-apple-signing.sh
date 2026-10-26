@@ -105,6 +105,21 @@ private_security import "$cadence_signing_work/certificate.p12" -k "$cadence_sig
   -f pkcs12 -x -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
 private_security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
   -k "$cadence_signing_keychain_password" "$cadence_signing_keychain"
+# Creation does not reliably add an absolute-path keychain to the search list.
+# Restrict lookup to the owned keychain; cleanup restores the exact original list.
+security list-keychains -d user -s "$cadence_signing_keychain" >/dev/null 2>&1 \
+  || fail 'could not isolate the signing keychain search list'
+security find-identity -v -p codesigning "$cadence_signing_keychain" > "$cadence_signing_work/identities.txt" 2>/dev/null \
+  || fail 'could not evaluate imported code-signing identities'
+cadence_signing_identity_count=0
+cadence_signing_identity_pattern='^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-Fa-f]{40})[[:space:]]+"([^"]+)"[[:space:]]*$'
+while IFS= read -r cadence_signing_line; do
+  if [[ $cadence_signing_line =~ $cadence_signing_identity_pattern && ${BASH_REMATCH[2]} == "$APPLE_SIGNING_IDENTITY" ]]; then
+    cadence_signing_identity_count=$((cadence_signing_identity_count + 1))
+  fi
+done < "$cadence_signing_work/identities.txt"
+[[ $cadence_signing_identity_count == 1 ]] || fail 'the configured Developer ID identity is not uniquely valid in the isolated keychain'
+printf 'Verified the configured Developer ID identity in the isolated keychain.\n'
 rm -f -- "$cadence_signing_work/certificate.p12"
 unset cadence_signing_keychain_password APPLE_DEVELOPER_ID_P12_BASE64 \
   APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_NOTARY_KEY_P8

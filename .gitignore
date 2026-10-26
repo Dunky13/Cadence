@@ -5,3 +5,6 @@ dist/
 .local/
 *.xcuserstate
 xcuserdata/
+
+# Separate pinned product checkout used by release automation.
+.release-source/

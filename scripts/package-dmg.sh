@@ -66,6 +66,15 @@ if [[ -e $output || -L $output ]]; then
     [[ -f $output && ! -L $output ]] || fail 'Refusing to replace a directory, symlink, or nonregular output.'
 fi
 
+resource_root=$(cd "$(dirname "$0")/.." && pwd -P)
+# Default local packaging uses its own resources. An explicit release context
+# always verifies and reads the separately frozen product checkout.
+if [[ -n ${RELEASE_SOURCE_DIRECTORY+x} || -n ${AUTOMATION_COMMIT+x} ]]; then
+    # shellcheck source=scripts/release-source-context.sh
+    source "$resource_root/scripts/release-source-context.sh"
+    release_source_context "${SOURCE_COMMIT:-}" "$resource_root"
+    resource_root=$release_source_directory
+fi
 work=$(mktemp -d "$output_dir/.cadence-dmg.XXXXXX")
 cleanup() {
     result=$?
@@ -79,7 +88,7 @@ trap 'exit 143' TERM
 mkdir "$work/image"
 ditto --rsrc --extattr --qtn --acl "$app" "$work/image/Cadence.app"
 ln -s /Applications "$work/image/Applications"
-cp "$(cd "$(dirname "$0")/.." && pwd)/Resources/Install.txt" "$work/image/Install Cadence.txt"
+cp "$resource_root/Resources/Install.txt" "$work/image/Install Cadence.txt"
 codesign --verify --deep --strict --all-architectures "$work/image/Cadence.app"
 sync
 

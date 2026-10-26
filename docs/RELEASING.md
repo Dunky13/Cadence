@@ -10,6 +10,8 @@ The committed `CFBundleShortVersionString` in `Resources/Info.plist` is the stab
 
 The release workflow does not compile again. It verifies and promotes the bytes from the original credential-free CI run. The CI artifact, receipts and release state are retained for 90 days. A fifteen-minute schedule and no-input manual dispatch continue interrupted candidates. The oldest active candidate is completed before newer work. GitHub job/workflow reruns are rejected before credentials because they can replay stale successful-preflight outputs. Recovery uses a fresh scheduled run or `gh workflow run release.yml --ref main`, which selects current custody; routine continuation requires no click. Expired or missing custody fails closed; it does not authorize rebuilding or resubmitting an unresolved stage.
 
+Signing and publication run automation from the pinned workflow commit and read product metadata and installer instructions from a separate clean `.release-source` checkout at the original product commit. The workflow sets `AUTOMATION_COMMIT` and `RELEASE_SOURCE_DIRECTORY`; both checkouts must match their pins and remain clean. If automation differs from the product source, its exact successful main-push CI and `ci-required` aggregate are required too. This lets tested automation repairs resume old artifacts and receipts without rebuilding them or changing the product source, version/build, tag or submitted bytes. Direct local use without split context still requires the exact product HEAD. Artifact IDs are opaque; custody ordering uses provider creation timestamps, producer run order and explicit stage order.
+
 Cadence has no self-update feed, Sparkle key or separate update-signing authority. Stable trust remains the configured Developer ID team, Apple's notarization tickets, Gatekeeper and the repository's immutable release assets. This pipeline does not introduce an alternative trust key.
 
 ## CI gate
@@ -34,7 +36,7 @@ Configure these values in the `apple-signing` environment through a secure secre
 | Variable | `APPLE_NOTARY_KEY_ID` | API key ID |
 | Variable | `APPLE_NOTARY_ISSUER_ID` | API issuer UUID |
 
-The credential wrapper creates an isolated temporary keychain, grants codesign access and removes private material from the child environment. It restores and verifies the original search list and deletes temporary credentials after success, failure or handled cancellation. It does not change the default/system keychain. Cleanup failure blocks advancement and promotion.
+The credential wrapper creates an isolated temporary keychain, grants codesign access, restricts lookup to that keychain and requires exactly one valid configured Developer ID identity before invoking a phase. It removes private material from the child environment, restores and verifies the original search list, and deletes temporary credentials after success, failure or handled cancellation. It does not change the default/system keychain. Cleanup failure blocks advancement and promotion.
 
 ## Durable Apple stages
 
@@ -49,6 +51,8 @@ verified CI artifact
 ```
 
 All checkpoints are immutable Actions artifacts. The envelope binds source SHA, origin CI run/artifact/digest and the state archive hash. Restoring verifies the artifact download digest, envelope, member paths and archive hash before extraction. Existing receipts are explicitly marked restored while retaining their original prepare owner. A restored durable upload claim is separately marked so it cannot authorize another upload. Artifact names alone carry no authority: checkpoint and completion markers must originate in the trusted main release workflow.
+
+Phase bodies explicitly propagate terminal exit codes, including on macOS Bash 3.2; they do not rely on a bare conditional and shell errexit. A terminal failure skips later phases while always-retained failure checkpoints remain available. Exit 75 records pending state without readiness; only successful finish emits readiness.
 
 Each v2 receipt binds source, bundle, version/build, architecture, team, origin CI artifact, descriptive submitted name, submitted SHA256, release run/attempt and stage. Existing v1/unbound or mismatched receipts are refused. Process locks serialize local access; workflow concurrency serializes hosted candidates. The successful checkpoint upload before each submission is mandatory.
 

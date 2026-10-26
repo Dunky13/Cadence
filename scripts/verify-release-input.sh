@@ -7,9 +7,11 @@ fail() { printf 'verify-release-input: %s\n' "$*" >&2; exit 1; }
 input=$1 destination=$2
 [[ -d $input && ! -L $input ]] || fail 'Input directory is missing.'
 [[ ! -e $destination && ! -L $destination ]] || fail 'Extraction directory already exists.'
-version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
-source_commit=$(git rev-parse --verify HEAD)
-[[ ${SOURCE_COMMIT:-${GITHUB_SHA:-$source_commit}} == "$source_commit" ]] || fail 'Checkout differs from the selected source commit.'
+# shellcheck source=scripts/release-source-context.sh
+source scripts/release-source-context.sh
+source_commit=${SOURCE_COMMIT:-${GITHUB_SHA:-$(git rev-parse --verify HEAD)}}
+release_source_context "$source_commit" "$PWD"
+version=$(plutil -extract CFBundleShortVersionString raw "$release_source_directory/Resources/Info.plist")
 archive="Cadence-App-$version-universal-local.zip"
 image="Cadence-Installer-$version-universal-local.dmg"
 [[ -f $input/SHA256SUMS && ! -L $input/SHA256SUMS ]] || fail 'Missing checksums.'

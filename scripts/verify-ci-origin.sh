@@ -9,7 +9,11 @@ fail() { printf 'verify-ci-origin: %s\n' "$*" >&2; exit 1; }
 [[ ${GITHUB_REPOSITORY:-} == Dunky13/Cadence && ${GITHUB_REF:-} == refs/heads/main ]] || fail 'Only this repository main may sign.'
 [[ ${SOURCE_COMMIT:-} =~ ^[0-9a-f]{40}$ && ${BUILD_CI_RUN_ID:-} =~ ^[1-9][0-9]*$ && ${BUILD_ARTIFACT_ID:-} =~ ^[1-9][0-9]*$ ]] || fail 'Missing exact source/run/artifact binding.'
 [[ ${BUILD_ARTIFACT_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Missing immutable build digest.'
-[[ $(git rev-parse HEAD) == "$SOURCE_COMMIT" && -z $(git status --porcelain) ]] || fail 'Checkout is dirty or differs from the selected source.'
+script_dir=$(cd "$(dirname "$0")" && pwd -P)
+cd "$script_dir/.."
+# shellcheck source=scripts/release-source-context.sh
+source "$script_dir/release-source-context.sh"
+release_source_context "$SOURCE_COMMIT" "$script_dir/.."
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-origin.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_CI_RUN_ID" > "$work/run.json"

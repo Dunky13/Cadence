@@ -16,6 +16,7 @@ case "$1" in
         if [[ ${TAG_SCENARIO:-} == wrong-checkout && $3 == HEAD ]]; then commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
         if [[ ${TAG_SCENARIO:-} == wrong-local-tag && $3 != HEAD ]]; then commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
         printf '%s\n' "$commit" ;;
+    status) : ;;
     fetch)
         [[ ${TAG_SCENARIO:-} != fetch-error ]] || exit 1
         if [[ $* == *refs/tags/* ]]; then touch "$TAG_STATE/fetched"; fi ;;

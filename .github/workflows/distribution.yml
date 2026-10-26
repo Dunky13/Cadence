@@ -57,6 +57,8 @@ jobs:
       team_id: ${{ steps.finish.outputs.team_id }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      AUTOMATION_COMMIT: ${{ github.sha }}
+      RELEASE_SOURCE_DIRECTORY: ${{ github.workspace }}/.release-source
       SOURCE_COMMIT: ${{ inputs.source_sha }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       BUILD_CI_RUN_ID: ${{ inputs.build_run_id }}
@@ -69,7 +71,14 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Checkout frozen product source without executing its automation
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
           ref: ${{ inputs.source_sha }}
+          path: .release-source
           fetch-depth: 0
       - name: Install metadata validation prerequisite
         run: brew install jq
@@ -100,6 +109,7 @@ jobs:
           fi
       - name: Candidate phase prepare
         id: prepare
+        if: success()
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -115,7 +125,8 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            # Bash 3.2 does not apply errexit to [[ ... ]]; fail explicitly.
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after prepare
@@ -137,6 +148,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase app-claim
         id: app_claim
+        if: success()
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -152,7 +164,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after app-claim
@@ -174,6 +186,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase app-submit
         id: app_submit
+        if: success()
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -189,7 +202,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after app-submit
@@ -211,6 +224,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase app-wait
         id: app_wait
+        if: success()
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -226,7 +240,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after app-wait
@@ -248,7 +262,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase installer-prepare
         id: installer_prepare
-        if: steps.app_wait.outputs.pending != 'true'
+        if: success() && steps.app_wait.outputs.pending != 'true'
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -264,7 +278,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after installer-prepare
@@ -286,7 +300,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase installer-claim
         id: installer_claim
-        if: steps.app_wait.outputs.pending != 'true'
+        if: success() && steps.app_wait.outputs.pending != 'true'
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -302,7 +316,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after installer-claim
@@ -324,7 +338,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase installer-submit
         id: installer_submit
-        if: steps.app_wait.outputs.pending != 'true'
+        if: success() && steps.app_wait.outputs.pending != 'true'
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -340,7 +354,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after installer-submit
@@ -362,7 +376,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase installer-wait
         id: installer_wait
-        if: steps.app_wait.outputs.pending != 'true'
+        if: success() && steps.app_wait.outputs.pending != 'true'
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -378,7 +392,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Seal durable checkpoint after installer-wait
@@ -400,7 +414,7 @@ jobs:
           compression-level: 0
       - name: Candidate phase finish
         id: finish
-        if: steps.app_wait.outputs.pending != 'true' && steps.installer_wait.outputs.pending != 'true'
+        if: success() && steps.app_wait.outputs.pending != 'true' && steps.installer_wait.outputs.pending != 'true'
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -416,7 +430,7 @@ jobs:
           if [[ $result == 75 ]]; then
             printf 'pending=true\n' >> "$GITHUB_OUTPUT"
           else
-            [[ $result == 0 ]]
+            [[ $result == 0 ]] || exit "$result"
             printf 'pending=false\n' >> "$GITHUB_OUTPUT"
             printf 'ready=true\nteam_id=%s\n' "$APPLE_TEAM_ID" >> "$GITHUB_OUTPUT"
           fi
