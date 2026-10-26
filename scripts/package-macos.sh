@@ -30,9 +30,9 @@ image=$(./scripts/package-dmg.sh --app dist/Cadence.app --output-dir "$work/outp
 source_commit=$(git rev-parse --verify HEAD 2>/dev/null) || source_commit=''
 dirty=true
 if [[ -n $source_commit && -z $(git status --porcelain) ]]; then dirty=false; fi
-jq -n --arg version "$version" --arg architecture "$architecture" --arg commit "$source_commit" --argjson dirty "$dirty" \
+jq -n --arg version "$version" --arg architecture "$architecture" --arg commit "$source_commit" --argjson dirty "$dirty" --arg build "$(plutil -extract CFBundleVersion raw dist/Cadence.app/Contents/Info.plist)" \
     '{schema:"cadence/build/v1",version:$version,architecture:$architecture,
-      source_commit:(if $commit == "" then null else $commit end),source_dirty:$dirty,signing:"ad-hoc",notarization:"not attempted"}' \
+      source_commit:(if $commit == "" then null else $commit end),source_dirty:$dirty,build_number:$build,signing:"ad-hoc",notarization:"not attempted"}' \
     > "$work/output/build-manifest.json"
 (
     cd "$work/output"

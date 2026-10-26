@@ -33,6 +33,9 @@ mkdir -p "$destination"
 ditto -x -k "$input/$archive" "$destination"
 app="$destination/Cadence.app"
 [[ -d $app && ! -L $app ]] || fail 'App is missing from the verified archive.'
+if [[ -n ${BUILD_NUMBER:-} ]]; then
+    [[ $BUILD_NUMBER =~ ^[1-9][0-9]*$ && $(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist") == "$BUILD_NUMBER" ]] || fail 'Bundle build number differs from the selected CI run.'
+fi
 codesign --verify --deep --strict --all-architectures "$app"
 for architecture in arm64 x86_64; do xcrun lipo "$app/Contents/MacOS/Cadence" -verify_arch "$architecture"; done
 actual=$(xcrun lipo -archs "$app/Contents/MacOS/Cadence" | tr ' ' '\n' | LC_ALL=C sort)

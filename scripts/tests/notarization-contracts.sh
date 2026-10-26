@@ -1,355 +1,249 @@
 #!/bin/bash
-# Exercise notarization contracts with a fake xcrun. Never contact Apple.
+# Durable receipt/recovery contracts. Fake provider only; no Apple services.
 set -euo pipefail
-
 root=$(cd "$(dirname "$0")/../.." && pwd)
-helper="$root/scripts/notarize-artifact.sh"
-for tool in jq shasum mktemp; do
-    command -v "$tool" >/dev/null || { printf 'Missing test prerequisite: %s\n' "$tool" >&2; exit 1; }
-done
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-notary-contracts.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
+cat > "$work/bin/uname" <<'STUB'
+#!/bin/bash
+printf 'Darwin\n'
+STUB
 cat > "$work/bin/xcrun" <<'STUB'
 #!/bin/bash
 set -euo pipefail
-[[ ${1:-} == notarytool ]] || exit 91
-operation=${2:-}
-shift 2
+[[ $1 == notarytool ]] || exit 91
+operation=$2; shift 2
 printf '%s\n' "$operation" >> "$FAKE_CALL_LOG"
-id='A1234567-89AB-4CDE-8123-456789ABCDEF'
+id=a1234567-89ab-4cde-8123-456789abcdef
 mode=${FAKE_MODE:-accepted}
-case "$operation" in
+case $operation in
     submit)
-        no_wait=false
-        for argument in "$@"; do
-            [[ $argument != --wait ]] || exit 92
-            if [[ $argument == --no-wait ]]; then no_wait=true; fi
-        done
-        [[ $no_wait == true ]] || exit 93
+        [[ " $* " == *' --no-wait '* && " $* " != *' --wait '* ]] || exit 92
         printf 'FAKE_PRIVATE_STDERR_MARKER\n' >&2
-        case "$mode" in
-            submit-failure) printf '{"status":"Unknown"}\n'; exit 7 ;;
-            submit-failure-with-id) printf '{"id":"%s","status":"In Progress"}\n' "$id"; exit 7 ;;
-            missing-id) printf '{"status":"Submitted"}\n' ;;
-            invalid-id) printf '{"id":"not-a-uuid","status":"Submitted"}\n' ;;
-            malformed-submit) printf '{not JSON\n' ;;
-            *) printf '{"id":"%s","status":"In Progress"}\n' "$id" ;;
+        case $mode in
+            missing-id) printf '{"status":"Submitted"}'; exit 7 ;;
+            failure-with-id) printf '{"id":"%s","status":"In Progress"}' "$id"; exit 7 ;;
         esac
-        ;;
-    wait)
-        [[ ${1:-} == a1234567-89ab-4cde-8123-456789abcdef ]] || exit 94
-        printf 'FAKE_PRIVATE_STDERR_MARKER\n' >&2
-        case "$mode" in
-            timeout) printf '{"id":"%s","status":"In Progress"}\n' "$id"; exit 124 ;;
-            invalid) printf '{"id":"%s","status":"Invalid"}\n' "$id"; exit 65 ;;
-            rejected) printf '{"id":"%s","status":"Rejected"}\n' "$id" ;;
-            wait-error) printf '{"id":"%s","status":"Accepted"}\n' "$id"; exit 8 ;;
-            tamper)
-                printf 'tampered after upload\n' >> "$FAKE_ARCHIVE"
-                printf '{"id":"%s","status":"Accepted"}\n' "$id"
-                ;;
-            *) printf '{"id":"%s","status":"Accepted"}\n' "$id" ;;
+        printf '{"id":"%s","status":"In Progress"}\n' "$id" ;;
+    history)
+        case $mode in
+            history-unavailable) exit 9 ;;
+            history-missing) printf '{"history":[]}'; exit 0 ;;
+            history-ambiguous)
+                jq -n --arg id "$id" --arg name "${FAKE_ARCHIVE##*/}" '{history:[{id:$id,name:$name},{id:$id,name:$name}]}'
+                exit 0 ;;
         esac
+        jq -n --arg id "$id" --arg name "${FAKE_ARCHIVE##*/}" '{history:[{id:$id,name:$name}]}' ;;
+    info|wait)
+        [[ $1 == "$id" ]] || exit 94
+        status='In Progress'
+        if [[ $operation == wait ]]; then
+            [[ " $* " == *' --timeout 1s '* ]] || exit 93
+            status=Accepted
+            case $mode in pending) status='In Progress' ;; rejected) status=Rejected ;; invalid) status=Invalid ;; esac
+        fi
+        if [[ $mode == wrong-info-id && $operation == info ]]; then id=b1234567-89ab-4cde-8123-456789abcdef; fi
+        if [[ $mode == tamper && $operation == wait ]]; then printf 'changed' >> "$FAKE_ARCHIVE"; fi
+        printf '{"id":"%s","status":"%s"}\n' "$id" "$status"
+        [[ $mode != pending || $operation != wait ]] || exit 124
+        [[ $mode != wait-error || $operation != wait ]] || exit 8
         ;;
     log)
-        [[ ${1:-} == a1234567-89ab-4cde-8123-456789abcdef ]] || exit 95
-        output=''
-        for argument in "$@"; do output=$argument; done
-        [[ -n $output ]] || exit 96
-        printf 'FAKE_PRIVATE_STDERR_MARKER\n' >&2
-        case "$mode" in
-            missing-log) exit 9 ;;
-            malformed-log) printf '{not JSON\n' > "$output"; exit 0 ;;
-        esac
-        log_id=$id
-        log_status=Accepted
-        filename=${FAKE_ARCHIVE##*/}
-        sha=$FAKE_ORIGINAL_SHA
-        issues='[]'
-        case "$mode" in
-            invalid) log_status=Invalid ;;
-            rejected) log_status=Rejected ;;
-            wrong-log-id) log_id='B1234567-89AB-4CDE-8123-456789ABCDEF' ;;
-            wrong-log-status) log_status=Invalid ;;
-            wrong-filename) filename='Another-App-1.2.3-universal.zip' ;;
-            wrong-sha) sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ;;
+        output=''; for argument in "$@"; do output=$argument; done
+        case $mode in missing-log|pending-log) exit 9 ;; esac
+        status=Accepted name=${FAKE_ARCHIVE##*/} sha=$FAKE_ORIGINAL_SHA issues='[]'
+        case $mode in
+            rejected) status=Rejected ;; invalid) status=Invalid ;;
+            wrong-log-id) id=b1234567-89ab-4cde-8123-456789abcdef ;;
+            wrong-log-status) status=Invalid ;;
+            wrong-filename) name=wrong.zip ;;
+            wrong-sha) sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+            warnings) issues='[{"severity":"warning"},{"severity":"Warning"}]' ;;
             invalid-issues) issues='[{"severity":true}]' ;;
-            warnings) issues='[{"severity":"warning","message":"Fixture warning"},{"severity":"Warning","message":"Second fixture warning"},{"severity":"info"}]' ;;
         esac
-        if [[ $mode == minimal-log ]]; then
-            jq -n --arg id "$log_id" --arg status "$log_status" '{jobId:$id,status:$status,issues:null}' > "$output"
-        else
-            jq -n --arg id "$log_id" --arg status "$log_status" --arg filename "$filename" \
-                --arg sha "$sha" --argjson issues "$issues" \
-                '{jobId:$id,status:$status,archiveFilename:$filename,sha256:$sha,issues:$issues}' > "$output"
-        fi
+        jq -n --arg id "$id" --arg status "$status" --arg name "$name" --arg sha "$sha" --argjson issues "$issues" \
+            '{jobId:$id,status:$status,archiveFilename:$name,sha256:$sha,issues:$issues}' > "$output"
+        if [[ $mode == missing-log-sha ]]; then jq 'del(.sha256)' "$output" > "$output.tmp"; mv "$output.tmp" "$output"; fi
         ;;
     *) exit 97 ;;
 esac
 STUB
-chmod +x "$work/bin/xcrun"
-
+chmod +x "$work/bin/"*
+export PATH="$work/bin:$PATH" SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export BUILD_CI_RUN_ID=101 BUILD_ARTIFACT_ID=202 BUILD_ARTIFACT_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export APPLE_TEAM_ID=ABC1234567 GITHUB_RUN_ID=303 GITHUB_RUN_ATTEMPT=1 APPLE_NOTARY_TIMEOUT=1s
+export NOTARY_KEYCHAIN_PROFILE=fixture-profile
+unset APPLE_NOTARY_LOCK_DIRECTORY
+unset NOTARY_KEY_FILE NOTARY_KEYCHAIN NOTARY_KEY_ID NOTARY_ISSUER_ID
 cases=0
-source_commit='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-fail() { printf 'FAIL: %s (%s)\n' "$case_name" "$*" >&2; exit 1; }
-passed() { cases=$((cases + 1)); printf 'PASS: %s\n' "$case_name"; }
+fail() { printf 'FAIL %s: %s\n' "$case_name" "$*" >&2; cat "$directory/output" >&2; exit 1; }
 new_case() {
-    case_name=$1
-    directory="$work/$case_name"
-    mkdir "$directory"
-    stage=${2:-app}
-    extension=zip
-    prefix=App
-    if [[ $stage == installer ]]; then extension=dmg; prefix=Installer; fi
-    archive="$directory/Cadence-$prefix-1.2.3-universal.$extension"
-    evidence="$directory/evidence"
-    receipt="$evidence/$stage-universal-receipt.json"
-    diagnostic="$evidence/$stage-universal-log.json"
-    calls="$directory/calls"
-    : > "$calls"
-    printf 'immutable fixture archive bytes\n' > "$archive"
-    original_sha=$(shasum -a 256 "$archive")
-    original_sha=${original_sha%% *}
-    test_source_commit=$source_commit
-    test_timeout=1s
+    case_name=$1 stage=${2:-app}
+    directory="$work/$case_name"; mkdir "$directory"
+    archive="$directory/Cadence-App-1.2.3-build-42-universal.zip"
+    [[ $stage != installer ]] || archive="$directory/Cadence-Installer-1.2.3-build-42-universal.dmg"
+    printf 'exact retained bytes' > "$archive"
+    original_sha=$(shasum -a 256 < "$archive"); original_sha=${original_sha%% *}
+    evidence="$directory/evidence" receipt="$directory/evidence/$stage-universal-receipt.json"
+    calls="$directory/calls"; : > "$calls"
+    export GITHUB_RUN_ID=303 GITHUB_RUN_ATTEMPT=1
 }
 invoke() {
-    mode=$1
-    shift
     result=0
-    (
-        unset NOTARY_KEY_FILE NOTARY_KEY_ID NOTARY_ISSUER_ID NOTARY_KEYCHAIN
-        unset NOTARY_KEYCHAIN_PROFILE GITHUB_STEP_SUMMARY APPLE_NOTARY_TIMEOUT
-        if [[ $mode != no-auth ]]; then export NOTARY_KEYCHAIN_PROFILE=fixture-profile; fi
-        export PATH="$work/bin:$PATH"
-        export SOURCE_COMMIT="$test_source_commit" APPLE_NOTARY_TIMEOUT="$test_timeout"
-        export FAKE_MODE="$mode" FAKE_CALL_LOG="$calls" FAKE_ARCHIVE="$archive" FAKE_ORIGINAL_SHA="$original_sha"
-        export GITHUB_STEP_SUMMARY="$directory/summary.md"
-        export GITHUB_RUN_ID=12345 GITHUB_RUN_ATTEMPT=2
-        /bin/bash "$helper" --archive "$archive" --stage "$stage" --version 1.2.3 \
-            --architecture universal --evidence-dir "$evidence" "$@"
-    ) > "$directory/stdout" 2> "$directory/stderr" || result=$?
+    FAKE_CALL_LOG="$calls" FAKE_ARCHIVE="$archive" FAKE_ORIGINAL_SHA="$original_sha" FAKE_MODE="$2" \
+        bash "$root/scripts/notarize-artifact.sh" --archive "$archive" --stage "$stage" --version 1.2.3 --build 42 \
+        --architecture universal --evidence-dir "$evidence" --operation "$1" "${@:3}" > "$directory/output" 2>&1 || result=$?
 }
-call_count() {
-    awk -v operation="$1" '$0 == operation { count++ } END { print count+0 }' "$calls"
+expect() { [[ $result == "$1" ]] || fail "expected exit $1, got $result"; }
+count() { awk -v op="$1" '$0 == op {n++} END {print n+0}' "$calls"; }
+assert_json() { jq -e "$1" "$receipt" >/dev/null || fail "receipt assertion: $1"; }
+passed() {
+    if [[ -d $evidence ]] && rg -q 'FAKE_PRIVATE_STDERR_MARKER|fixture-profile' "$evidence"; then fail 'private evidence leak'; fi
+    cases=$((cases+1)); printf 'PASS %s\n' "$case_name"
 }
-assert_calls() {
-    [[ $(call_count submit) == "$1" && $(call_count wait) == "$2" && $(call_count log) == "$3" ]] ||
-        fail "unexpected submit/wait/log calls: $(tr '\n' ',' < "$calls")"
-}
-assert_success() { [[ $result == 0 ]] || fail "helper exited $result"; }
-assert_failure() { [[ $result != 0 ]] || fail 'helper unexpectedly succeeded'; }
-assert_receipt() {
-    [[ -f $receipt ]] || fail 'missing public receipt'
-    jq -e "$1" "$receipt" >/dev/null || fail "receipt assertion: $1"
-}
-assert_no_private_output() {
-    if [[ -d $evidence ]] && grep -REq 'FAKE_PRIVATE_STDERR_MARKER|fixture-profile' "$evidence"; then
-        fail 'private tool output or authentication input was retained in public evidence'
+prepare() { invoke prepare accepted; expect 0; [[ ! -s $calls ]] || fail 'prepare used network'; }
+submit() { invoke submit accepted; expect 0; }
+
+for kind in app installer; do
+    new_case "accepted-$kind" "$kind"
+    prepare; prepare
+    assert_json '.schema == "cadence/apple-notarization/v2" and .attempted == false and .binding.build_number == "42" and .ci_run.id == "303"'
+    submit
+    assert_json '.attempted and .submission_id == "a1234567-89ab-4cde-8123-456789abcdef"'
+    [[ $(count wait) == 0 ]] || fail 'submit waited before checkpoint'
+    invoke wait accepted; expect 0
+    assert_json '.status == "Accepted" and .diagnostics.verified'
+    export GITHUB_RUN_ID=404 GITHUB_RUN_ATTEMPT=2
+    invoke submit accepted; expect 0
+    invoke wait accepted; expect 0
+    invoke verify accepted; expect 0
+    [[ $(count submit) == 1 ]] || fail 'resubmitted retained UUID'
+    passed
+done
+new_case restored-unattempted-intent
+prepare
+export GITHUB_RUN_ATTEMPT=2
+invoke submit accepted; expect 0
+[[ $(count submit) == 0 && $(count history) == 1 ]] || fail 'restored intent uploaded'
+assert_json '.attempted and .submission_id != null and .ci_run.attempt == "1"'
+invoke wait accepted; expect 0
+passed
+new_case restored-same-owner
+prepare
+jq '.restored=true' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
+invoke submit accepted; expect 0
+[[ $(count submit) == 0 && $(count history) == 1 ]] || fail 'explicit restored intent uploaded'
+passed
+new_case lost-uuid
+prepare
+invoke submit missing-id; expect 75
+assert_json '.attempted and .submission_id == null'
+invoke submit accepted; expect 0
+invoke wait accepted; expect 0
+[[ $(count submit) == 1 && $(count history) == 1 ]] || fail 'lost UUID was resubmitted'
+passed
+new_case failed-submit-retains-id
+prepare; invoke submit failure-with-id; expect 75
+invoke wait accepted; expect 0
+[[ $(count submit) == 1 ]] || fail 'resubmitted failure with UUID'
+passed
+for mode in history-missing history-ambiguous history-unavailable pending-log wrong-sha; do
+    new_case "lost-uuid-$mode"
+    prepare; invoke submit missing-id; expect 75
+    invoke wait "$mode"
+    if [[ $mode == wrong-sha ]]; then expect 1; else expect 75; fi
+    assert_json '.submission_id == null'
+    [[ $(count submit) == 1 ]] || fail 'uncertain upload repeated'
+    passed
+done
+new_case pending-resumes
+prepare; submit
+invoke wait pending; expect 75
+assert_json '.status == "In Progress" and .diagnostics.verified == false and .wait_exit_status == 124'
+invoke wait accepted; expect 0
+[[ $(count submit) == 1 ]] || fail 'pending submission repeated'
+passed
+new_case accepted-log-after-wait-error
+prepare; submit
+invoke wait wait-error; expect 75
+assert_json '.status == "Accepted" and .diagnostics.verified and .wait_exit_status == 8'
+invoke verify accepted; expect 1
+invoke wait accepted; expect 0
+invoke verify accepted; expect 0
+[[ $(count submit) == 1 ]] || fail 'wait error repeated upload'
+passed
+for mode in rejected invalid wrong-log-id wrong-log-status wrong-filename wrong-sha invalid-issues missing-log missing-log-sha wrong-info-id tamper; do
+    new_case "$mode"
+    prepare; submit
+    invoke wait "$mode"; expect 1
+    invoke verify accepted; expect 1
+    if [[ $mode == rejected || $mode == invalid ]]; then
+        assert_json '.diagnostics.verified and .status != "Accepted"'
+        [[ -f $evidence/$stage-universal-log.json ]] || fail 'rejection diagnostic lost'
     fi
-}
-
-new_case accepted-app
-invoke accepted
-assert_success
-assert_calls 1 1 1
-assert_receipt '.schema == "cadence/apple-notarization/v1" and .app == "Cadence" and .version == "1.2.3" and .architecture == "universal" and .stage == "app" and .archive_filename == "Cadence-App-1.2.3-universal.zip" and .source_commit == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and .submission_id == "a1234567-89ab-4cde-8123-456789abcdef" and .status == "Accepted" and .wait_exit_status == 0 and .diagnostics.verified and .diagnostics.warning_count == 0'
-jq -e --arg sha "$original_sha" '.submitted_sha256 == $sha' "$receipt" >/dev/null || fail 'wrong submitted digest'
-assert_receipt '.ci_run.id == "12345" and .ci_run.attempt == "2"'
-[[ -f $diagnostic ]] || fail 'matching diagnostic log not retained'
-grep -Fq 'Cadence-App-1.2.3-universal.zip' "$directory/summary.md" || fail 'missing descriptive summary'
-assert_no_private_output
-passed
-
-new_case accepted-installer installer
-invoke accepted
-assert_success
-assert_calls 1 1 1
-assert_receipt '.stage == "installer" and .archive_filename == "Cadence-Installer-1.2.3-universal.dmg" and .diagnostics.log_file == "installer-universal-log.json"'
-passed
-
-new_case accepted-minimal-diagnostics
-invoke minimal-log
-assert_success
-assert_receipt '.diagnostics.verified and .diagnostics.warning_count == 0'
-passed
-
-new_case accepted-warning-count
-invoke warnings
-assert_success
-assert_receipt '.diagnostics.verified and .diagnostics.warning_count == 2'
-passed
-
-for mode in invalid rejected; do
-    new_case "$mode"
-    invoke "$mode"
-    assert_failure
-    assert_calls 1 1 1
-    assert_receipt '.submission_id != null and .diagnostics.verified and (.status == "Invalid" or .status == "Rejected")'
-    [[ -f $diagnostic ]] || fail 'rejection diagnostic was discarded'
-    assert_no_private_output
+    [[ $(count submit) == 1 ]] || fail 'submission repeated'
     passed
 done
-
-new_case wait-timeout
-invoke timeout
-assert_failure
-assert_calls 1 1 0
-assert_receipt '.status == "In Progress" and .submission_id != null and .wait_exit_status == 124 and (.diagnostics.verified | not)'
+new_case warning-diagnostics
+prepare; submit; invoke wait warnings; expect 0
+assert_json '.diagnostics.warning_count == 2'
 passed
-
-for mode in submit-failure missing-id invalid-id malformed-submit; do
-    new_case "$mode"
-    invoke "$mode"
-    assert_failure
-    assert_calls 1 0 0
-    assert_receipt '.submission_id == null and (.diagnostics.verified | not)'
-    assert_no_private_output
+for field in source_commit build_number bundle_id architecture team_id origin; do
+    new_case "wrong-binding-$field"
+    prepare
+    jq --arg field "$field" '.binding[$field] = "wrong"' "$receipt" > "$directory/changed"
+    mv "$directory/changed" "$receipt"
+    invoke submit accepted; expect 1
+    [[ ! -s $calls ]] || fail 'mismatched binding reached provider'
     passed
 done
-
-new_case failed-submit-retains-returned-id
-invoke submit-failure-with-id
-assert_failure
-assert_calls 1 0 0
-assert_receipt '.submission_id == "a1234567-89ab-4cde-8123-456789abcdef" and (.diagnostics.verified | not)'
-passed
-
-for mode in wrong-log-id wrong-log-status malformed-log missing-log wrong-filename wrong-sha invalid-issues; do
-    new_case "$mode"
-    invoke "$mode"
-    assert_failure
-    assert_calls 1 1 1
-    assert_receipt '.status == "Accepted" and .submission_id != null and (.diagnostics.verified | not) and .diagnostics.log_file == null'
-    [[ ! -e $diagnostic ]] || fail 'unverified diagnostic was promoted'
-    assert_no_private_output
+for field in BUILD_CI_RUN_ID BUILD_ARTIFACT_ID BUILD_ARTIFACT_DIGEST SOURCE_COMMIT APPLE_TEAM_ID GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; do
+    new_case "missing-$field"
+    saved=${!field}; export "$field="
+    invoke prepare accepted; expect 1
+    export "$field=$saved"
+    [[ ! -s $calls ]] || fail 'missing binding reached provider'
     passed
 done
-
-new_case wait-exit-failure-even-with-accepted-log
-invoke wait-error
-assert_failure
-assert_calls 1 1 1
-assert_receipt '.status == "Accepted" and .wait_exit_status == 8 and .diagnostics.verified'
+new_case wrong-archive-hash
+prepare; printf 'tamper' >> "$archive"
+invoke submit accepted; expect 1
+[[ ! -s $calls ]] || fail 'changed archive uploaded'
 passed
-
-new_case archive-changed-after-wait
-invoke tamper
-assert_failure
-assert_calls 1 1 1
-assert_receipt '.status == "Accepted" and .diagnostics.verified'
-grep -Fq 'Archive changed after submission' "$directory/stderr" || fail 'archive mutation was not detected'
-jq -e --arg sha "$original_sha" '.submitted_sha256 == $sha' "$receipt" >/dev/null || fail 'original digest was overwritten'
+new_case legacy-receipt
+prepare; jq '.schema = "cadence/apple-notarization/v1"' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
+invoke submit accepted; expect 1
+[[ ! -s $calls ]] || fail 'legacy receipt reached provider'
 passed
-
-new_case existing-evidence-blocks-resubmission
-invoke accepted
-assert_success
-receipt_sha=$(shasum -a 256 "$receipt")
-invoke accepted
-assert_failure
-assert_calls 1 1 1
-[[ $(shasum -a 256 "$receipt") == "$receipt_sha" ]] || fail 'existing receipt was overwritten'
+for field in binding binding.build_number submitted_sha256; do
+    new_case "missing-receipt-$field"
+    prepare
+    jq --arg field "$field" 'delpaths([$field | split(".")])' "$receipt" > "$directory/changed"; mv "$directory/changed" "$receipt"
+    invoke submit accepted; expect 1
+    [[ ! -s $calls ]] || fail 'missing receipt binding reached provider'
+    passed
+done
+new_case missing-build
+invoke prepare accepted --build ''; expect 1
+[[ ! -s $calls ]] || fail 'missing build reached provider'
 passed
-
-new_case existing-log-blocks-submission
-mkdir "$evidence"
-printf 'existing diagnostic\n' > "$diagnostic"
-invoke accepted
-assert_failure
-assert_calls 0 0 0
-grep -Fxq 'existing diagnostic' "$diagnostic" || fail 'existing log was overwritten'
+new_case missing-intent
+invoke submit accepted; expect 1
+[[ ! -s $calls ]] || fail 'submitted without intent'
 passed
-
-new_case existing-stage-lock-blocks-submission
+new_case lock
 mkdir -p "$evidence/.app-universal.lock"
-printf 'owned by another submitter\n' > "$evidence/.app-universal.lock/owner"
-invoke accepted
-assert_failure
-assert_calls 0 0 0
-[[ ! -e $receipt ]] || fail 'Another submitter lock was bypassed'
-grep -Fxq 'owned by another submitter' "$evidence/.app-universal.lock/owner" || fail 'Another submitter lock was modified'
+invoke prepare accepted; expect 1
+[[ ! -s $calls ]] || fail 'lock bypassed'
 passed
-
-new_case missing-authentication
-invoke no-auth
-assert_failure
-assert_calls 0 0 0
-[[ ! -e $receipt ]] || fail 'upload receipt created without authentication'
+new_case wrong-build-name
+invoke prepare accepted --build 43; expect 1
+[[ ! -s $calls ]] || fail 'wrong build name reached provider'
 passed
-
-new_case wrong-project-name
-wrong="$directory/Another-App-1.2.3-universal.zip"
-cp "$archive" "$wrong"
-invoke accepted --archive "$wrong"
-assert_failure
-assert_calls 0 0 0
+new_case changed-retained-log
+prepare; submit; invoke wait accepted; expect 0
+jq '.sha256="wrong"' "$evidence/app-universal-log.json" > "$directory/changed"; mv "$directory/changed" "$evidence/app-universal-log.json"
+invoke verify accepted; expect 1
 passed
-
-new_case invalid-version
-invoke accepted --version v1.2.3
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case archive-version-mismatch
-invoke accepted --version 1.2.4
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case invalid-architecture
-invoke accepted --architecture linux
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case archive-architecture-mismatch
-invoke accepted --architecture arm64
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case invalid-stage
-invoke accepted --stage payload
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case archive-stage-mismatch
-invoke accepted --stage installer
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case symlink-archive
-link="$directory/link/Cadence-App-1.2.3-universal.zip"
-mkdir "$directory/link"
-ln -s "$archive" "$link"
-invoke accepted --archive "$link"
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case missing-option-value
-invoke accepted --version
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case invalid-timeout
-test_timeout=forever
-invoke accepted
-assert_failure
-assert_calls 0 0 0
-passed
-
-new_case invalid-source-commit
-test_source_commit=12345
-invoke accepted
-assert_failure
-assert_calls 0 0 0
-passed
-
 printf 'Notarization contracts: %s cases passed; no Apple services contacted.\n' "$cases"

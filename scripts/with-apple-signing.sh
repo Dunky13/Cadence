@@ -8,8 +8,16 @@ umask 077
 fail() { printf 'apple-signing: %s\n' "$*" >&2; exit 1; }
 usage() { printf 'Usage: scripts/with-apple-signing.sh COMMAND [ARGUMENTS...]\n'; }
 private_security() {
-  local result=0
-  security "$@" >/dev/null 2>&1 || result=$?
+  local result=0 argument escaped command=''
+  # security's command interpreter reads private stdin; passwords never enter
+  # its process arguments. Reject line delimiters before constructing one command.
+  for argument in "$@"; do
+    [[ $argument != *$'\n'* && $argument != *$'\r'* ]] || fail 'multiline security arguments are unsupported'
+    escaped=${argument//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+    command+="\"$escaped\" "
+  done
+  printf '%s\n' "$command" | security -i >/dev/null 2>&1 || result=$?
   if [[ $result != 0 ]]; then
     printf 'apple-signing: security %s failed (exit %s)\n' "$1" "$result" >&2
   fi

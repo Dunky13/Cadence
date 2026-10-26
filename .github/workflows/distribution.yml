@@ -1,86 +1,96 @@
 name: Signed macOS distribution
 
 on:
-  workflow_dispatch:
-    inputs:
-      authorize_notarization:
-        description: Sign and submit Cadence to Apple (does not publish a release)
-        required: true
-        default: false
-        type: boolean
   workflow_call:
     inputs:
-      authorize_notarization:
+      source_sha:
         required: true
-        type: boolean
+        type: string
       release_tag:
         required: true
         type: string
-      source_sha:
-        description: Exact main commit selected by the production release preflight
+      build_number:
         required: true
+        type: string
+      build_run_id:
+        required: true
+        type: string
+      build_artifact_id:
+        required: true
+        type: string
+      build_artifact_digest:
+        required: true
+        type: string
+      checkpoint_id:
+        required: false
+        default: ''
         type: string
     outputs:
       artifact_id:
-        description: Immutable verified signed distribution from this run
         value: ${{ jobs.sign.outputs.artifact_id }}
+      artifact_digest:
+        value: ${{ jobs.sign.outputs.artifact_digest }}
+      team_id:
+        value: ${{ jobs.sign.outputs.team_id }}
+      ready:
+        value: ${{ jobs.sign.outputs.ready }}
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: cadence-apple-signing
   cancel-in-progress: false
 
 jobs:
-  verify:
-    if: inputs.authorize_notarization && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/ci.yml
-    with:
-      source_sha: ${{ inputs.source_sha || github.sha }}
-
   sign:
-    name: Developer ID, descriptive notarization, and installer verification
-    needs: verify
-    if: inputs.authorize_notarization && github.ref == 'refs/heads/main' && needs.verify.result == 'success'
+    name: Resume exact candidate, Developer ID, Apple and installer gates
+    if: github.repository == 'Dunky13/Cadence' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     environment: apple-signing
     timeout-minutes: 90
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      ready: ${{ steps.finish.outputs.ready }}
+      team_id: ${{ steps.finish.outputs.team_id }}
     env:
-      # Matches Hikyo's working API-key client instead of the runner default.
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      SOURCE_COMMIT: ${{ inputs.source_sha || github.sha }}
+      SOURCE_COMMIT: ${{ inputs.source_sha }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      BUILD_CI_RUN_ID: ${{ inputs.build_run_id }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      BUILD_ARTIFACT_ID: ${{ inputs.build_artifact_id }}
+      BUILD_ARTIFACT_DIGEST: ${{ inputs.build_artifact_digest }}
+      STATE_DIRECTORY: dist/recovery-state
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-          ref: ${{ inputs.source_sha || github.sha }}
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 0
-      - name: Require the immutable build artifact ID
-        env:
-          ARTIFACT_ID: ${{ needs.verify.outputs.artifact_id }}
-        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
-          path: ${{ runner.temp }}/cadence-unsigned
-          merge-multiple: true
       - name: Install metadata validation prerequisite
         run: brew install jq
-      - name: Recheck production tag before loading Apple credentials
-        if: inputs.release_tag != ''
+      - name: Verify exact CI origin and main ancestry before credentials
+        run: ./scripts/verify-ci-origin.sh
+      - name: Download and verify the exact credential-free build
+        if: inputs.checkpoint_id == ''
+        run: |
+          ./scripts/download-release-artifact.sh "$BUILD_ARTIFACT_ID" "$BUILD_ARTIFACT_DIGEST" build "$RUNNER_TEMP/cadence-unsigned"
+          ./scripts/verify-release-input.sh "$RUNNER_TEMP/cadence-unsigned" "$RUNNER_TEMP/cadence-verified"
+      - name: Restore bound immutable state before credentials
+        if: inputs.checkpoint_id != ''
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-release-tag.sh --allow-missing-tag
-      - name: Verify exact clean build provenance before loading credentials
-        env:
-          INPUT: ${{ runner.temp }}/cadence-unsigned
-          EXTRACTED: ${{ runner.temp }}/cadence-verified
-        run: ./scripts/verify-release-input.sh "$INPUT" "$EXTRACTED"
-      - name: Sign app and installer, notarize named archives, and staple tickets
+          CHECKPOINT_ID: ${{ inputs.checkpoint_id }}
+        run: |
+          [[ "$CHECKPOINT_ID" =~ ^[1-9][0-9]*$ ]]
+          CHECKPOINT_DIGEST=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CHECKPOINT_ID" --jq .digest)
+          ./scripts/download-release-artifact.sh "$CHECKPOINT_ID" "$CHECKPOINT_DIGEST" checkpoint "$RUNNER_TEMP/cadence-checkpoint"
+          ./scripts/checkpoint-state.sh restore "$STATE_DIRECTORY" "$RUNNER_TEMP/cadence-checkpoint"
+      - name: Candidate phase prepare
+        id: prepare
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -89,30 +99,275 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
-          APPLE_NOTARY_TIMEOUT: 30m
-          APP_INPUT: ${{ runner.temp }}/cadence-verified/Cadence.app
-        run: ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --app "$APP_INPUT" --architecture universal
-      - name: Promote verified artifacts only after signing credentials are removed
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase prepare --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after prepare
+        id: seal_prepare
+        if: ${{ always() && steps.prepare.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-prepare"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after prepare
+        if: ${{ always() && steps.seal_prepare.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-prepare
+          path: ${{ runner.temp }}/checkpoint-prepare/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase app-submit
+        id: app_submit
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase app-submit --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after app-submit
+        id: seal_app_submit
+        if: ${{ always() && steps.app_submit.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-app-submit"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after app-submit
+        if: ${{ always() && steps.seal_app_submit.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-app-submit
+          path: ${{ runner.temp }}/checkpoint-app-submit/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase app-wait
+        id: app_wait
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase app-wait --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after app-wait
+        id: seal_app_wait
+        if: ${{ always() && steps.app_wait.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-app-wait"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after app-wait
+        if: ${{ always() && steps.seal_app_wait.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-app-wait
+          path: ${{ runner.temp }}/checkpoint-app-wait/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase installer-prepare
+        id: installer_prepare
+        if: steps.app_wait.outputs.pending != 'true'
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase installer-prepare --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after installer-prepare
+        id: seal_installer_prepare
+        if: ${{ always() && steps.installer_prepare.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-installer-prepare"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after installer-prepare
+        if: ${{ always() && steps.seal_installer_prepare.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-installer-prepare
+          path: ${{ runner.temp }}/checkpoint-installer-prepare/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase installer-submit
+        id: installer_submit
+        if: steps.app_wait.outputs.pending != 'true'
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase installer-submit --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after installer-submit
+        id: seal_installer_submit
+        if: ${{ always() && steps.installer_submit.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-installer-submit"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after installer-submit
+        if: ${{ always() && steps.seal_installer_submit.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-installer-submit
+          path: ${{ runner.temp }}/checkpoint-installer-submit/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase installer-wait
+        id: installer_wait
+        if: steps.app_wait.outputs.pending != 'true'
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase installer-wait --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after installer-wait
+        id: seal_installer_wait
+        if: ${{ always() && steps.installer_wait.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-installer-wait"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after installer-wait
+        if: ${{ always() && steps.seal_installer_wait.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-installer-wait
+          path: ${{ runner.temp }}/checkpoint-installer-wait/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Candidate phase finish
+        id: finish
+        if: steps.app_wait.outputs.pending != 'true' && steps.installer_wait.outputs.pending != 'true'
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_TIMEOUT: 10m
+        run: |
+          result=0
+          ./scripts/with-apple-signing.sh ./scripts/release-macos.sh --phase finish --state-dir "$STATE_DIRECTORY" --app "$RUNNER_TEMP/cadence-verified/Cadence.app" --architecture universal || result=$?
+          if [[ $result == 75 ]]; then
+            printf 'pending=true\n' >> "$GITHUB_OUTPUT"
+          else
+            [[ $result == 0 ]]
+            printf 'pending=false\n' >> "$GITHUB_OUTPUT"
+            printf 'ready=true\nteam_id=%s\n' "$APPLE_TEAM_ID" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Seal durable checkpoint after finish
+        id: seal_finish
+        if: ${{ always() && steps.finish.outcome != 'skipped' }}
+        run: |
+          if [[ -d "$STATE_DIRECTORY" ]]; then
+            ./scripts/checkpoint-state.sh pack "$STATE_DIRECTORY" "$RUNNER_TEMP/checkpoint-finish"
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain exact state after finish
+        if: ${{ always() && steps.seal_finish.outputs.exists == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Checkpoint-${{ inputs.build_run_id }}-${{ inputs.build_artifact_id }}-${{ github.run_id }}-${{ github.run_attempt }}-finish
+          path: ${{ runner.temp }}/checkpoint-finish/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Promote only after credentials have been removed
+        if: steps.finish.outputs.ready == 'true'
         run: |
           [[ -d dist/.signed-candidate && ! -L dist/.signed-candidate ]]
           [[ ! -e dist/release && ! -L dist/release ]]
           (cd dist/.signed-candidate && shasum -a 256 --check SHA256SUMS)
           jq -e --arg commit "$SOURCE_COMMIT" '.schema == "cadence/distribution/v1" and .source_commit == $commit and .architecture == "universal" and .notarization == "Accepted" and .tickets == "stapled and validated"' dist/.signed-candidate/distribution.json
           mv dist/.signed-candidate dist/release
-      - name: Retain notarization IDs, submitted hashes, and Apple diagnostic logs
-        if: ${{ always() }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: Cadence-Notarization-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/notarization/
-          if-no-files-found: warn
-          retention-days: 30
-      - name: Store verified signed distribution for review (no publication)
+      - name: Store exact verified distribution
         id: upload
+        if: steps.finish.outputs.ready == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Cadence-Signed-macOS-universal-${{ inputs.source_sha || github.sha }}
-          path: dist/release/
+          name: Cadence-Signed-macOS-universal-${{ inputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/release/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0

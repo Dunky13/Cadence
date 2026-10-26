@@ -1,68 +1,90 @@
 name: Release latest main
 
 on:
+  workflow_run:
+    workflows: [macOS CI]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
-# Serialise all versions so two releases cannot race to become Latest.
+# One owner across candidates, recoveries and publication. Never cancel submissions.
 concurrency:
   group: cadence-production-release
   cancel-in-progress: false
 
 jobs:
   preflight:
-    name: Select latest main and verify unused release version
+    name: Select passed trusted-main CI bytes or resume pending candidate
+    if: github.repository == 'Dunky13/Cadence' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: macos-15
     timeout-minutes: 10
     outputs:
+      eligible: ${{ steps.source.outputs.eligible }}
       source_sha: ${{ steps.source.outputs.source_sha }}
       release_tag: ${{ steps.source.outputs.release_tag }}
+      build_run_id: ${{ steps.source.outputs.build_run_id }}
+      build_number: ${{ steps.source.outputs.build_number }}
+      build_artifact_id: ${{ steps.source.outputs.build_artifact_id }}
+      build_artifact_digest: ${{ steps.source.outputs.build_artifact_digest }}
+      checkpoint_id: ${{ steps.source.outputs.checkpoint_id }}
     steps:
-      - name: Require dispatch from the trusted main workflow
-        run: '[[ "$GITHUB_REF" == refs/heads/main ]]'
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install release metadata prerequisite
         run: brew install jq
-      - name: Pin latest main and validate before builds or Apple submissions
+      - name: Pin an existing passed CI candidate before credentials or new submissions
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          SOURCE_COMMIT=$(git rev-parse --verify HEAD)
-          RELEASE_TAG="v$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)"
-          export SOURCE_COMMIT RELEASE_TAG
-          ./scripts/verify-release-tag.sh --allow-missing-tag
-          printf 'source_sha=%s\nrelease_tag=%s\n' "$SOURCE_COMMIT" "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          printf 'Releasing %s from main commit %s.\n' "$RELEASE_TAG" "$SOURCE_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/select-release-candidate.sh
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" > "$RUNNER_TEMP/release-policy.json"
+          jq -e '.enabled == true' "$RUNNER_TEMP/release-policy.json"
 
   distribution:
-    name: Test, build, sign, notarize, and verify universal installer
+    name: Sign or resume exact universal candidate
     needs: preflight
+    if: needs.preflight.outputs.eligible == 'true'
     permissions:
       contents: read
+      actions: read
     uses: ./.github/workflows/distribution.yml
     secrets: inherit
     with:
-      authorize_notarization: true
       source_sha: ${{ needs.preflight.outputs.source_sha }}
       release_tag: ${{ needs.preflight.outputs.release_tag }}
+      build_run_id: ${{ needs.preflight.outputs.build_run_id }}
+      build_number: ${{ needs.preflight.outputs.build_number }}
+      build_artifact_id: ${{ needs.preflight.outputs.build_artifact_id }}
+      build_artifact_digest: ${{ needs.preflight.outputs.build_artifact_digest }}
+      checkpoint_id: ${{ needs.preflight.outputs.checkpoint_id }}
 
   publish:
-    name: Verify uploaded bytes and publish production release
+    name: Reconcile owned draft, verify exact bytes and publish immutable release
     needs: [preflight, distribution]
+    if: needs.distribution.outputs.ready == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     env:
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
       RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+      BUILD_CI_RUN_ID: ${{ needs.preflight.outputs.build_run_id }}
+      BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+      BUILD_ARTIFACT_ID: ${{ needs.preflight.outputs.build_artifact_id }}
+      BUILD_ARTIFACT_DIGEST: ${{ needs.preflight.outputs.build_artifact_digest }}
+      GH_TOKEN: ${{ github.token }}
     permissions:
       contents: write
+      actions: read
     environment:
       name: production
       url: ${{ steps.publish.outputs.release_url }}
@@ -72,22 +94,70 @@ jobs:
           ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Require the immutable signed artifact ID
+      - name: Verify immutable signed artifact bytes
         env:
           ARTIFACT_ID: ${{ needs.distribution.outputs.artifact_id }}
-        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          artifact-ids: ${{ needs.distribution.outputs.artifact_id }}
-          path: ${{ runner.temp }}/cadence-production
-          merge-multiple: true
-      - name: Recheck production tag and release eligibility
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-release-tag.sh --allow-missing-tag
-      - name: Create version tag and draft, verify uploaded bytes, then publish
+          ARTIFACT_DIGEST: sha256:${{ needs.distribution.outputs.artifact_digest }}
+        run: ./scripts/download-release-artifact.sh "$ARTIFACT_ID" "$ARTIFACT_DIGEST" distribution "$RUNNER_TEMP/cadence-production"
+      - name: Verify or complete the exact candidate publication
         id: publish
+        run: ./scripts/publish-release.sh --resume "$RELEASE_TAG" "$RUNNER_TEMP/cadence-production"
+
+  consumer:
+    name: Independent public installation (${{ matrix.arch }})
+    needs: [preflight, distribution, publish]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
+      EXPECTED_TEAM_ID: ${{ needs.distribution.outputs.team_id }}
+      EXPECTED_NATIVE_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          persist-credentials: false
+      - name: Download public assets and verify installed demo startup
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_DIRECTORY: ${{ runner.temp }}/cadence-production
-        run: ./scripts/publish-release.sh "$RELEASE_TAG" "$RELEASE_DIRECTORY"
+          INSTALL_EVIDENCE_DIR: ${{ runner.temp }}/consumer-evidence
+        run: ./scripts/verify-public-install.sh
+      - name: Retain independent public-install evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Consumer-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/consumer-evidence/*
+          if-no-files-found: warn
+          retention-days: 90
+
+  complete:
+    name: Record fully qualified candidate completion
+    needs: [preflight, distribution, publish, consumer]
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - name: Record exact candidate and distribution custody
+        env:
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
+          BUILD_CI_RUN_ID: ${{ needs.preflight.outputs.build_run_id }}
+          BUILD_ARTIFACT_ID: ${{ needs.preflight.outputs.build_artifact_id }}
+          SIGNED_ARTIFACT_ID: ${{ needs.distribution.outputs.artifact_id }}
+          SIGNED_ARTIFACT_DIGEST: ${{ needs.distribution.outputs.artifact_digest }}
+        run: |
+          jq -n --arg source "$SOURCE_COMMIT" --arg ci "$BUILD_CI_RUN_ID" --arg build "$BUILD_ARTIFACT_ID" --arg signed "$SIGNED_ARTIFACT_ID" --arg digest "$SIGNED_ARTIFACT_DIGEST" '{source_commit:$source,build_ci_run_id:$ci,build_artifact_id:$build,signed_artifact_id:$signed,signed_artifact_digest:$digest}' > "$RUNNER_TEMP/completion.json"
+      - name: Persist completion only after both public consumer checks pass
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-Published-${{ needs.preflight.outputs.build_run_id }}-${{ needs.preflight.outputs.build_artifact_id }}
+          path: ${{ runner.temp }}/completion.json
+          if-no-files-found: error
+          retention-days: 90

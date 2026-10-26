@@ -70,7 +70,9 @@ invoke() {
     env PATH="$work/bin:$PATH" TAG_CALLS="$calls" TAG_RELEASES="$releases" TAG_STATE="$work/$case_name" \
         GITHUB_REF_TYPE=tag GITHUB_REF="refs/tags/v$version" GITHUB_REF_NAME="v$version" \
         GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=example/Cadence \
-        SOURCE_COMMIT='' RELEASE_TAG='' TAG_SCENARIO='' "$@" /bin/bash "$root/scripts/verify-release-tag.sh" ${test_mode:+"$test_mode"} \
+        SOURCE_COMMIT='' RELEASE_TAG='' TAG_SCENARIO='' RECOVER_CANDIDATE=false \
+        BUILD_CI_RUN_ID=17 BUILD_ARTIFACT_ID=23 \
+        BUILD_ARTIFACT_DIGEST=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd "$@" /bin/bash "$root/scripts/verify-release-tag.sh" ${test_mode:+"$test_mode"} \
         > "$work/$case_name/output" 2>&1 || result=$?
 }
 accept() { invoke "$@"; [[ $result == 0 ]] || { cat "$work/$case_name/output" >&2; fail 'valid tag rejected'; }; cases=$((cases + 1)); }
@@ -138,4 +140,72 @@ new_case no-tag-for-existing-release
 jq -n --arg tag "v$version" '[[{tag_name:$tag,draft:false,prerelease:false}]]' > "$releases"
 reject "${main_context[@]}" TAG_SCENARIO=missing-tag
 [[ ! -e $work/$case_name/created ]] || fail 'tag created despite existing release'
+# Bound draft recovery, with the same origin and build fields as the publisher.
+# shellcheck source=scripts/publication-candidate.sh
+source "$root/scripts/publication-candidate.sh"
+new_bound_draft() {
+    new_case "$1"
+    local build origin candidate marker
+    build=$(plutil -extract CFBundleVersion raw "$root/Resources/Info.plist")
+    origin='{"build_ci_run_id":"17","build_artifact_id":"23","build_artifact_digest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}'
+    candidate=$(jq -cnS --arg version "$version" --arg build "$build" --argjson origin "$origin" '
+        {schema:"cadence/publication/v1",repository:"example/Cadence",tag:("v"+$version),
+         version:$version,build_number:$build,source_commit:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",origin:$origin,
+         assets:{("Cadence-App-"+$version+"-universal.zip"):("d"*64),
+                 ("Cadence-Installer-"+$version+"-universal.dmg"):("e"*64),
+                 SHA256SUMS:("f"*64),"distribution.json":("a"*64)}}')
+    marker=$(publication_body "$candidate")
+    jq -n --arg tag "v$version" --arg body "$marker" '[[{id:42,tag_name:$tag,
+        name:("Cadence "+$tag),target_commitish:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        draft:true,immutable:false,prerelease:false,body:$body,
+        author:{login:"github-actions[bot]",type:"Bot",id:41898282}}]]' > "$releases"
+}
+test_mode=--allow-missing-tag
+new_bound_draft resume-draft
+accept "${main_context[@]}" RECOVER_CANDIDATE=true
+[[ ! -e $work/$case_name/created ]] || fail 'draft preflight created a tag'
+new_bound_draft no-implicit-resume
+reject "${main_context[@]}"
+new_bound_draft resume-published
+jq '.[0][0].draft=false | .[0][0].immutable=true' "$releases" > "$releases.tmp"
+mv "$releases.tmp" "$releases"
+reject "${main_context[@]}" RECOVER_CANDIDATE=true
+for field in target_commitish body name author; do
+    new_bound_draft "resume-conflicting-$field"
+    jq --arg field "$field" '.[0][0][$field]="wrong"' "$releases" > "$releases.tmp"
+    mv "$releases.tmp" "$releases"
+    reject "${main_context[@]}" RECOVER_CANDIDATE=true
+done
+for binding in BUILD_CI_RUN_ID BUILD_ARTIFACT_ID BUILD_ARTIFACT_DIGEST; do
+    new_bound_draft "resume-wrong-$binding"
+    reject "${main_context[@]}" RECOVER_CANDIDATE=true "$binding=99"
+done
+new_bound_draft resume-duplicate-drafts
+jq '.[0] += .[0]' "$releases" > "$releases.tmp"
+mv "$releases.tmp" "$releases"
+reject "${main_context[@]}" RECOVER_CANDIDATE=true
+new_bound_draft resume-no-remote-tag
+reject "${main_context[@]}" RECOVER_CANDIDATE=true TAG_SCENARIO=missing-tag
+test_mode=--create-tag
+new_bound_draft resume-create-tag-mode
+accept "${main_context[@]}" RECOVER_CANDIDATE=true
+[[ ! -e $work/$case_name/created && -e $work/$case_name/fetched ]] || fail 'recovery replaced its tag'
+test_mode=--resume
+new_bound_draft tag-resume-cli
+accept
+for conflict in marker-source marker-origin marker-assets duplicate-json; do
+    new_bound_draft "resume-$conflict"
+    case "$conflict" in
+        marker-source) transform='.source_commit="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' ;;
+        marker-origin) transform='.origin.build_ci_run_id="18"' ;;
+        marker-assets) transform='.assets.extra=("d"*64)' ;;
+        duplicate-json) transform='.' ;;
+    esac
+    marker=$(jq -r '.[0][0].body | capture("^<!-- cadence-publication/v1 (?<c>.+) -->$").c' "$releases" | jq -cS "$transform")
+    if [[ $conflict == duplicate-json ]]; then marker="{\"schema\":\"other\",${marker#\{}"; fi
+    marker=$(publication_body "$marker")
+    jq --arg body "$marker" '.[0][0].body=$body' "$releases" > "$releases.tmp"
+    mv "$releases.tmp" "$releases"
+    reject "${main_context[@]}"
+done
 printf 'Production tag preflight contracts: %s cases passed; no provider mutations.\n' "$cases"
