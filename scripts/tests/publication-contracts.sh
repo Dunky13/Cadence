@@ -117,6 +117,9 @@ if [[ $1 == api ]]; then
             [[ $mode != lookup-auth && $mode != lookup-network ]] || exit 1
             if [[ $mode == existing-release || $mode == existing-draft ]]; then
                 printf '[[{"tag_name":"v1.2.3","draft":true}]]\n'
+            elif [[ -e $state/created && $mode == delayed-draft-visibility && ! -e $state/visibility-lag-seen ]]; then
+                touch "$state/visibility-lag-seen"
+                printf '[[]]\n'
             elif [[ -e $state/created ]]; then metadata | jq -s '[.]'
             else printf '[[]]\n'; fi ;;
         repos/fixture/Cadence/releases)
@@ -360,6 +363,19 @@ invoke
 cases=$((cases + 1))
 # Recovery across separate invocations: only the explicitly selected candidate
 # may be resumed. Record each mutation to prove no create/overwrite/republication.
+new_case delayed-draft-visibility
+invoke
+[[ $result != 0 && -e $state/created && ! -e $state/published ]] || fail 'invisible created draft was not retained'
+[[ $(grep -c '^event:create$' "$state/calls") == 1 ]] || fail 'invisible draft creation was repeated'
+! grep -Eq '^event:(upload|publish)$' "$state/calls" || fail 'invisible draft reached publication'
+cases=$((cases + 1))
+mode=success
+: > "$state/calls"
+invoke RECOVER_CANDIDATE=true
+[[ $result == 0 && -e $state/published ]] || fail 'visible draft did not resume after list delay'
+! grep -qx event:create "$state/calls" || fail 'delayed visibility recovery created another draft'
+[[ $(grep -c '^event:upload$' "$state/calls") == 4 && $(grep -c '^event:publish$' "$state/calls") == 1 ]] || fail 'delayed visibility recovery repeated mutations'
+cases=$((cases + 1))
 seed_draft() {
     new_case "$1" "${2:-publish-failure}"
     invoke

@@ -37,5 +37,5 @@ hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mountpoint" "$image
 ditto --rsrc --extattr --qtn --acl "$mountpoint/Cadence.app" "$work/Applications/Cadence.app"
 [[ $(apple_tree_sha "$work/Applications/Cadence.app") == "$expected_tree" ]] || fail 'Installed app differs from the bound version/build/signature.'
 codesign --verify --deep --strict --all-architectures "$work/Applications/Cadence.app"
-xcrun stapler validate "$work/Applications/Cadence.app"
+"$(dirname "$0")/validate-apple-ticket.sh" "$work/Applications/Cadence.app"
 spctl --assess --type execute --verbose=4 "$work/Applications/Cadence.app"

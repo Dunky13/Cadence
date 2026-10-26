@@ -37,7 +37,7 @@ if [[ $release == true ]]; then
         grep -qx "TeamIdentifier=$EXPECTED_TEAM_ID" <<< "$image_signature" || fail 'Installer signing authority differs.'
     fi
     [[ $image_signature == *'Authority=Developer ID Application: '* ]] || fail 'Release image lacks a Developer ID Application signature.'
-    xcrun stapler validate "$image"
+    "$(dirname "$0")/validate-apple-ticket.sh" "$image"
     spctl --assess --type open --context context:primary-signature --verbose=2 "$image"
 fi
 hdiutil verify "$image"
@@ -111,8 +111,8 @@ if [[ $release == true ]]; then
         grep -qx "TeamIdentifier=$EXPECTED_TEAM_ID" <<< "$app_signature" || fail 'Installed app signing authority differs.'
     fi
     [[ $app_signature == *'Authority=Developer ID Application: '* ]] || fail 'Release app lacks a Developer ID Application signature.'
-    xcrun stapler validate "$app"
-    xcrun stapler validate "$work/Applications/Cadence.app"
+    "$(dirname "$0")/validate-apple-ticket.sh" "$app"
+    "$(dirname "$0")/validate-apple-ticket.sh" "$work/Applications/Cadence.app"
     spctl --assess --type execute --verbose=2 "$work/Applications/Cadence.app"
 fi
 if [[ $launch_demo == true ]]; then

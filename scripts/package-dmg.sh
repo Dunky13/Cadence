@@ -52,7 +52,7 @@ if [[ $release == true ]]; then
     need xcrun
     signature=$(codesign --display --verbose=4 "$app" 2>&1)
     [[ $signature == *'Authority=Developer ID Application: '* ]] || fail 'Release packaging requires a Developer ID Application signature.'
-    xcrun stapler validate "$app" >&2
+    "$(dirname "$0")/validate-apple-ticket.sh" "$app" >&2
 fi
 
 [[ $output_dir == /* ]] || output_dir="$PWD/$output_dir"
