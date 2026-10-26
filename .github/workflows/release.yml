@@ -45,8 +45,12 @@ jobs:
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
+        run: ./scripts/select-release-candidate.sh
+      - name: Verify effective immutable-release policy before Apple access
+        if: steps.source.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          ./scripts/select-release-candidate.sh
           gh api "repos/$GITHUB_REPOSITORY/immutable-releases" > "$RUNNER_TEMP/release-policy.json"
           jq -e '.enabled == true' "$RUNNER_TEMP/release-policy.json"
 

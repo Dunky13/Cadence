@@ -1,5 +1,7 @@
 # Cadence unattended Apple release handoff
 
+Delivery: [PR #3](https://github.com/Dunky13/Cadence/pull/3).
+
 Baseline: `be4551332fb7f2b37bf8e11a50a02f27177b8f37`, frozen 26 October 2026. The user explicitly authorized the full unattended endpoint, including immutable public publication. Scope is this repository's Apple release path. No other project's environment or stable authority is changed.
 
 The initial live snapshot established reviewer-free, main-only `apple-signing` and `production` environments, four public identity variables, zero environment/repository Apple secrets, no branch protection or rulesets, immutable releases disabled, no release/distribution runs and no tags/releases. Existing hosted CI run [40330172283](https://github.com/Dunky13/Cadence/actions/runs/40330172283) passed at the baseline, with universal artifact `12655193214`, digest `sha256:9fb7673fea0799522c5c0f80eaf554f698c815d7c95ee6971326e3093e41ce00`. That artifact is ad-hoc signed and supplies no Apple proof.
