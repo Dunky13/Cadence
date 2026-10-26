@@ -1,8 +1,10 @@
 # Cadence: implementation handoff
 
+Delivery: [PR #1](https://github.com/Dunky13/Cadence/pull/1). Hosted checks and merge status are recorded there.
+
 ## Outcome
 
-A native macOS menu bar utility is implemented and packaged locally. It discovers the logged-in user’s LaunchAgents, describes their execution cadence, displays live launchd status and configured run output, and provides persistent enable/disable controls. It also creates new jobs from cron expressions, saved as native LaunchAgents as requested. The authorized endpoint is the working local app; no remote repository, pull request, publication, or deployment was requested.
+A native macOS menu bar utility is implemented and packaged locally. It discovers the logged-in user’s LaunchAgents, describes their execution cadence, displays live launchd status and configured run output, and provides persistent enable/disable controls. It also creates new jobs from cron expressions, saved as native LaunchAgents as requested. The macOS production pipeline is included in the same delivery; Apple submission and public binary release require its separate version-tag flow and environment configuration.
 
 ## Run it
 
