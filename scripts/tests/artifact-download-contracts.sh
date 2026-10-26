@@ -46,6 +46,33 @@ for name in Cadence-App-1.2.3-universal-local.zip Cadence-Installer-1.2.3-univer
     cmp "$work/payload/$name" "$work/wrapped-restored/$name"
 done
 cp "$FIXTURE_ZIP" "$work/wrapped.zip"
+# Central and local ZIP names must agree. ditto otherwise uses a different
+# extraction path from the one unzip -Z1 validated, silently losing a member.
+perl -0777pi -e 's{1\.2\.3-universal-local/SHA256SUMS}{XXXXXXXXXXXXXXXXXXXXX/SHA256SUMS}' "$FIXTURE_ZIP"
+unzip -Z1 "$FIXTURE_ZIP" | /usr/bin/grep -Fxq '1.2.3-universal-local/SHA256SUMS'
+digest=$(shasum -a 256 < "$FIXTURE_ZIP"); export FIXTURE_DIGEST="sha256:${digest%% *}"
+if PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" build "$work/header-mismatch" >/dev/null 2>&1; then exit 1; fi
+[[ ! -e $work/header-mismatch ]]
+cp "$work/wrapped.zip" "$FIXTURE_ZIP"
+# Independently require the complete actual extraction tree, even if an
+# extractor returns success after writing unexpected or incomplete output.
+cat > "$work/bin/ditto" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+/usr/bin/ditto "$@"
+destination=${!#}
+case $EXTRACTION_FAULT in
+    extra) mkdir "$destination/unexpected" ;;
+    missing) rm "$destination/1.2.3-universal-local/SHA256SUMS" ;;
+esac
+STUB
+chmod +x "$work/bin/ditto"
+digest=$(shasum -a 256 < "$FIXTURE_ZIP"); export FIXTURE_DIGEST="sha256:${digest%% *}"
+for fault in extra missing; do
+    if EXTRACTION_FAULT=$fault PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" build "$work/extractor-$fault" >/dev/null 2>&1; then exit 1; fi
+    [[ ! -e $work/extractor-$fault ]]
+done
+rm "$work/bin/ditto"
 # A mixed layout cannot hide a second root or overwrite flattened bytes.
 zip -dq "$FIXTURE_ZIP" 1.2.3-universal-local/SHA256SUMS
 (cd "$work/payload" && zip -q "$FIXTURE_ZIP" SHA256SUMS)
@@ -83,4 +110,4 @@ printf 'unexpected' > "$work/publication-payload/unexpected.json"
 (cd "$work/publication-payload" && zip -q "$FIXTURE_ZIP" unexpected.json)
 digest=$(shasum -a 256 < "$FIXTURE_ZIP"); export FIXTURE_DIGEST="sha256:${digest%% *}"
 if PATH="$work/bin:$PATH" bash "$helper" 300 "$FIXTURE_DIGEST" publication "$work/unexpected-receipt" >/dev/null 2>&1; then exit 1; fi
-printf '14 immutable artifact download contracts passed (synthetic only).\n'
+printf '17 immutable artifact download contracts passed (synthetic only).\n'

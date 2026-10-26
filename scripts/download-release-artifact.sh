@@ -47,7 +47,18 @@ while IFS= read -r member; do
         *) fail 'Unexpected artifact member.' ;;
     esac
 done < "$work/members"
+unzip -tq "$work/artifact.zip" > "$work/zip-validation" 2>&1 || fail 'Inconsistent or corrupt ZIP archive.'
 ditto -x -k "$work/artifact.zip" "$work/extracted"
+[[ -d $work/extracted && ! -L $work/extracted ]] || fail 'Missing regular extraction directory.'
+# Different ZIP readers can interpret names differently. Check the entire tree,
+# including siblings of the permitted package root, before promoting any file.
+cp "$work/members" "$work/expected-tree"
+if [[ $layout != flat ]]; then printf '%s\n' "${layout%/}" >> "$work/expected-tree"; fi
+find "$work/extracted" -mindepth 1 -print > "$work/extracted-paths"
+while IFS= read -r path; do printf '%s\n' "${path#"$work/extracted/"}"; done < "$work/extracted-paths" > "$work/actual-tree"
+LC_ALL=C sort "$work/expected-tree" > "$work/expected-sorted"
+LC_ALL=C sort "$work/actual-tree" > "$work/actual-sorted"
+cmp -s "$work/expected-sorted" "$work/actual-sorted" || fail 'Extracted tree differs from the validated artifact members.'
 payload="$work/extracted"
 if [[ $layout != flat ]]; then
     payload="$payload/${layout%/}"
