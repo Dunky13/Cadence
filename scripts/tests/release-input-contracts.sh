@@ -7,7 +7,11 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 cat > "$work/bin/git" <<'STUB'
 #!/bin/bash
-printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+case $1 in
+    rev-parse) printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+    status) : ;;
+    *) exit 99 ;;
+esac
 STUB
 cat > "$work/bin/ditto" <<'STUB'
 #!/bin/bash

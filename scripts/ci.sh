@@ -12,11 +12,13 @@ for script in scripts/*.sh scripts/tests/*.sh; do bash -n "$script"; done
 actionlint .github/workflows/*.yml
 ./scripts/tests/dmg-contracts.sh
 ./scripts/tests/signing-credentials-contracts.sh
+./scripts/tests/phase-workflow-contracts.sh
 ./scripts/tests/notarization-contracts.sh
 ./scripts/tests/apple-release-recovery-contracts.sh
 ./scripts/tests/checkpoint-contracts.sh
 ./scripts/tests/upload-claim-contracts.sh
 ./scripts/tests/signing-attempt-contracts.sh
+./scripts/tests/source-context-contracts.sh
 ./scripts/tests/artifact-download-contracts.sh
 ./scripts/tests/release-selection-contracts.sh
 ./scripts/tests/release-input-contracts.sh

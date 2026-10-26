@@ -23,12 +23,12 @@ done
 case $phase in prepare|app-claim|app-submit|app-wait|installer-prepare|installer-claim|installer-submit|installer-wait|finish) ;; *) fail 'Invalid release phase.' ;; esac
 [[ $(uname -s) == Darwin ]] || fail 'macOS is required.'
 for tool in codesign xcrun ditto plutil shasum jq spctl lipo; do command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"; done
-version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
-build=${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw Resources/Info.plist)}
+# shellcheck source=scripts/release-source-context.sh
+source scripts/release-source-context.sh
+release_source_context "${SOURCE_COMMIT:-}" "$PWD"
+version=$(plutil -extract CFBundleShortVersionString raw "$release_source_directory/Resources/Info.plist")
+build=${BUILD_NUMBER:-$(plutil -extract CFBundleVersion raw "$release_source_directory/Resources/Info.plist")}
 binding=$(apple_binding "$version" "$build" "$architecture")
-source_commit=$(git rev-parse --verify HEAD 2>/dev/null) || fail 'A source commit is required.'
-[[ $SOURCE_COMMIT == "$source_commit" ]] || fail 'Source commit does not match the checkout.'
-[[ -z $(git status --porcelain) ]] || fail 'Signed distribution requires a clean source checkout.'
 [[ $state == /* ]] || state="$PWD/$state"
 [[ ! -L $state ]] || fail 'State must not be a symlink.'
 mkdir -p "$state"

@@ -3,21 +3,31 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-publication-tests.XXXXXX")
+work=$(cd "$work" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 cat > "$work/bin/plutil" <<'STUB'
 #!/bin/bash
+if [[ ${PUBLICATION_SPLIT:-false} == true ]]; then
+    path=''; for argument in "$@"; do path=$argument; done
+    [[ $path == "$RELEASE_SOURCE_DIRECTORY/Resources/Info.plist" ]] || { printf '999.0.0\n'; exit; }
+fi
 if [[ $* == *CFBundleVersion* ]]; then printf '123\n'; else printf '1.2.3\n'; fi
 STUB
 cat > "$work/bin/git" <<'STUB'
 #!/bin/bash
 set -euo pipefail
 commit=${SOURCE_COMMIT:-$GITHUB_SHA}
+directory=$PWD
+if [[ $1 == -C ]]; then directory=$2; shift 2; fi
 case "$*" in
+    'rev-parse --show-toplevel') printf '%s\n' "$directory" ;;
+    'ls-files --error-unmatch '*) : ;;
     'rev-parse --verify HEAD')
-        if [[ $PUBLICATION_MODE == wrong-checkout ]]; then printf '%040d\n' 1; else printf '%s\n' "$commit"; fi ;;
+        if [[ $PUBLICATION_MODE == wrong-checkout ]]; then printf '%040d\n' 1; elif [[ -n ${AUTOMATION_COMMIT:-} && $directory != "$RELEASE_SOURCE_DIRECTORY" ]]; then printf '%s\n' "$AUTOMATION_COMMIT"; else printf '%s\n' "$commit"; fi ;;
     'rev-parse --verify refs/tags/v1.2.3^{commit}')
         if [[ $PUBLICATION_MODE == wrong-local-tag ]]; then printf '%040d\n' 1; else printf '%s\n' "$commit"; fi ;;
+    'status --porcelain --untracked-files=all') : ;;
     'fetch --no-tags origin main') : ;;
     'fetch --no-tags origin refs/tags/v1.2.3:refs/tags/v1.2.3') : ;;
     'merge-base --is-ancestor '* ) [[ $PUBLICATION_MODE != off-main ]] ;;
@@ -47,7 +57,7 @@ metadata() {
     if [[ ( $mode == mutable-public || $mode == policy-disabled ) && -e $state/published ]]; then immutable=false; fi
     jq --argjson draft "$draft" --argjson immutable "$immutable" \
         '. + {id:42,draft:$draft,immutable:$immutable,author:{login:"github-actions[bot]",type:"Bot",id:41898282},
-        html_url:"https://github.com/fixture/Cadence/releases/tag/v1.2.3"} | del(.generate_release_notes)
+        html_url:("https://github.com/"+env.GITHUB_REPOSITORY+"/releases/tag/v1.2.3")} | del(.generate_release_notes)
         | if env.PUBLICATION_MODE == "unowned-draft" then .author.login="maintainer"
           elif env.PUBLICATION_MODE == "spoofed-bot" then .author.id=123 else . end' "$state/create.json"
 }
@@ -82,7 +92,20 @@ if [[ $1 == api ]]; then
         previous=$argument
     done
     header() { if [[ $include == true ]]; then printf 'HTTP/2.0 %s\r\nContent-Type: application/json\r\n\r\n' "$1"; fi; }
+    # The same fake provider serves legacy and explicit trusted-main contexts.
+    endpoint=${endpoint/repos\/Dunky13\/Cadence/repos\/fixture\/Cadence}
     case "$endpoint" in
+        *workflows/ci.yml/runs\?*)
+            jq -n '[{workflow_runs:[{id:901,head_sha:env.AUTOMATION_COMMIT,head_branch:"main",event:"push",
+                path:".github/workflows/ci.yml",status:"completed",conclusion:"success",
+                repository:{full_name:env.GITHUB_REPOSITORY},head_repository:{full_name:env.GITHUB_REPOSITORY}}]}]' ;;
+        */runs/901)
+            jq -n '{id:901,head_sha:env.AUTOMATION_COMMIT,head_branch:"main",event:"push",
+                path:".github/workflows/ci.yml",status:"completed",conclusion:"success",
+                repository:{full_name:env.GITHUB_REPOSITORY},head_repository:{full_name:env.GITHUB_REPOSITORY}}' ;;
+        */runs/901/jobs\?*)
+            if [[ $mode == automation-ci-failed ]]; then printf '[{"jobs":[]}]';
+            else printf '[{"jobs":[{"name":"ci-required","status":"completed","conclusion":"success"}]}]'; fi ;;
         repos/fixture/Cadence/git/refs)
             record tag-create
             [[ $method == POST && -f $input_file && $mode != tag-create-failure ]] || exit 1
@@ -148,7 +171,7 @@ if [[ $1 == api ]]; then
             metadata ;;
         'repos/fixture/Cadence/releases/42/assets?name='*)
             record upload
-            [[ $* == *https://uploads.github.com/repos/fixture/Cadence/releases/42/assets\?name=* ]] || exit 1
+            [[ $* == *https://uploads.github.com/repos/"$GITHUB_REPOSITORY"/releases/42/assets\?name=* ]] || exit 1
             [[ $* == *'Content-Length: '* && $* == *'Content-Type: application/octet-stream'* ]] || exit 1
             name=${endpoint##*name=}
             [[ $method == POST && -f $input_file && ! -e $state/assets/$name ]] || exit 1
@@ -487,4 +510,22 @@ invoke RECOVER_CANDIDATE=true
 [[ $result != 0 ]] || fail 'lost terminal evidence authorized deletion'
 no_mutations
 cases=$((cases + 1))
+# Full immutable-publication and published-recovery paths use new automation,
+# with product tag/source/version/build and four asset hashes left unchanged.
+mkdir -p "$work/product/Resources"
+cp "$root/Resources/Info.plist" "$root/Resources/Install.txt" "$work/product/Resources/"
+split_context=(PUBLICATION_SPLIT=true RELEASE_SOURCE_DIRECTORY="$work/product"
+    AUTOMATION_COMMIT=cccccccccccccccccccccccccccccccccccccccc GITHUB_SHA=cccccccccccccccccccccccccccccccccccccccc
+    SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=Dunky13/Cadence
+    RELEASE_TAG=v1.2.3 GITHUB_REF_TYPE=branch GITHUB_REF=refs/heads/main GITHUB_REF_NAME=main)
+new_case split-source-publication success
+invoke "${split_context[@]}"
+[[ $result == 0 && -e $state/published ]] || fail 'split-source publication failed'
+jq -e '.target_commitish == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and .tag_name == "v1.2.3"' "$state/create.json" >/dev/null || fail 'tag/release followed automation commit'
+[[ $(grep -c '^event:upload$' "$state/calls") == 4 ]] || fail 'wrong split-source upload count'
+invoke "${split_context[@]}" RECOVER_CANDIDATE=true AUTOMATION_COMMIT=dddddddddddddddddddddddddddddddddddddddd GITHUB_SHA=dddddddddddddddddddddddddddddddddddddddd
+[[ $result == 0 && $(grep -c '^event:upload$' "$state/calls") == 4 && $(grep -c '^event:publish$' "$state/calls") == 1 ]] || fail 'automation repair changed immutable published bytes'
+cases=$((cases+2))
+new_case split-source-unpassed-automation automation-ci-failed
+reject_before_create "${split_context[@]}"
 printf 'Publication contracts: %s cases passed; no provider calls or publication.\n' "$cases"

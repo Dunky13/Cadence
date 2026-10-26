@@ -74,6 +74,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     env:
+      AUTOMATION_COMMIT: ${{ github.sha }}
+      RELEASE_SOURCE_DIRECTORY: ${{ github.workspace }}/.release-source
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
       RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
       BUILD_CI_RUN_ID: ${{ needs.preflight.outputs.build_run_id }}
@@ -90,9 +92,18 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Checkout frozen product source without executing its automation
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          path: .release-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify both exact CI origins before publication
+        run: ./scripts/verify-ci-origin.sh
       - name: Verify immutable signed artifact bytes
         env:
           ARTIFACT_ID: ${{ needs.distribution.outputs.artifact_id }}
@@ -139,7 +150,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download public assets and verify installed demo startup
         env:

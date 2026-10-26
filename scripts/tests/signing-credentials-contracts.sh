@@ -77,6 +77,13 @@ case $action in
     [[ $1 == -S && $2 == apple-tool:,apple:,codesign: && $3 == -s && $4 == -k \
       && $5 == fixture-random-keychain-password ]] || exit 100
     ;;
+  find-identity)
+    [[ $1 == -v && $2 == -p && $3 == codesigning && -f $4 ]] || exit 117
+    [[ ${FIXTURE_MODE:-} != identity-query-failure ]] || exit 21
+    [[ ${FIXTURE_MODE:-} != identity-missing ]] || exit 0
+    printf '  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "%s"\n' "$APPLE_SIGNING_IDENTITY"
+    if [[ ${FIXTURE_MODE:-} == identity-ambiguous ]]; then printf '  2) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "%s"\n' "$APPLE_SIGNING_IDENTITY"; fi
+    ;;
   delete-keychain)
     [[ ${FIXTURE_MODE:-} != delete-failure ]] || exit 19
     rm -f -- "$1"
@@ -146,7 +153,7 @@ run_case() {
       ;;
     *) cmp -s "$state/original-list" "$state/search-list" || { printf 'FAIL %s: search list not restored\n' "$name" >&2; exit 1; } ;;
   esac
-  if [[ $mode == import-failure ]]; then [[ ! -e $state/child-ran ]] || exit 1; fi
+  case $mode in import-failure|identity-query-failure|identity-missing|identity-ambiguous) [[ ! -e $state/child-ran ]] || exit 1 ;; esac
   if [[ -f $state/transport ]]; then
     [[ $(awk '$0 == "stdin" {n++} END {print n+0}' "$state/transport") -ge 1 || ! -f $state/keychain-path ]] || exit 116
 fi
@@ -157,6 +164,9 @@ run_case success success 0
 run_case tracing success 0
 run_case command-failure success 37 37
 run_case import-failure import-failure 17
+run_case identity-query-failure identity-query-failure 1
+run_case identity-missing identity-missing 1
+run_case identity-ambiguous identity-ambiguous 1
 run_case malformed-list malformed-list 1
 run_case missing-secret missing-secret 1
 run_case invalid-team invalid-team 1
@@ -167,4 +177,4 @@ run_case restore-failure restore-failure 1
 run_case readback-mismatch readback-mismatch 1
 run_case terminate signal-term 143
 run_case interrupt signal-int 130
-printf 'Signing credential contracts passed (14 cases, synthetic commands only).\n'
+printf 'Signing credential contracts passed (17 cases, synthetic commands only).\n'

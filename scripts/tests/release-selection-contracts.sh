@@ -44,7 +44,7 @@ reset_case() {
     jq -n --arg sha "$source_sha" --arg digest "$digest" '[{artifacts:[{id:300,name:("Cadence-macOS-universal-"+$sha),expired:false,digest:$digest}]}]' > "$FIXTURE/builds.json"
     printf '[{"artifacts":[]}]\n' > "$FIXTURE/inventory.json"
     printf '[[]]\n' > "$FIXTURE/releases.json"
-    printf '{"path":".github/workflows/release.yml","event":"schedule","head_branch":"main","repository":{"full_name":"fixture/Cadence"},"head_repository":{"id":42}}\n' > "$FIXTURE/owner.json"
+    printf '{"path":".github/workflows/release.yml","event":"schedule","head_branch":"main","run_number":14,"repository":{"full_name":"fixture/Cadence"},"head_repository":{"id":42}}\n' > "$FIXTURE/owner.json"
 }
 mutate() { jq "$2" "$FIXTURE/$1.json" > "$work/changed.json"; mv "$work/changed.json" "$FIXTURE/$1.json"; }
 invoke() {
@@ -70,7 +70,7 @@ reset_case; printf '[[{"tag_name":"v1.2.3","draft":true,"prerelease":false}]]' >
 reset_case; printf '[[{"tag_name":"v2.0.0","draft":false,"prerelease":false}]]' > "$FIXTURE/releases.json"; invoke; check 'older stable intent' 1
 reset_case; printf '{"malformed":true}' > "$FIXTURE/releases.json"; invoke; check 'malformed release inventory' 1
 checkpoint() {
-    jq -n --argjson fork "${1:-42}" '[{artifacts:[{id:400,name:"Cadence-Checkpoint-100-300-200-1-app-submit",expired:false,workflow_run:{id:200,head_branch:"main",head_repository_id:$fork}}]}]' > "$FIXTURE/inventory.json"
+    jq -n --argjson fork "${1:-42}" '[{artifacts:[{id:400,name:"Cadence-Checkpoint-100-300-200-1-app-submit",created_at:"2026-10-26T12:00:00Z",expired:false,workflow_run:{id:200,head_branch:"main",head_repository_id:$fork}}]}]' > "$FIXTURE/inventory.json"
 }
 reset_case; checkpoint; invoke; check 'resume retained candidate' 0
 grep -q 'checkpoint_id=400' "$work/output"
@@ -82,9 +82,16 @@ reset_case; checkpoint; mutate owner '.path=".github/workflows/ci.yml"'; invoke;
 grep -q '^checkpoint_id=$' "$work/output"
 reset_case; export CONFLICTING_TAG=true; invoke; check 'conflicting version tag before credentials' 1; unset CONFLICTING_TAG
 reset_case; export OFF_MAIN=true; invoke; check 'source no longer on main' 1; unset OFF_MAIN
-reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401) ] | .[0].artifacts[0].expired=true'; invoke; check 'newest valid custody supersedes expired older checkpoint' 0
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401 | .created_at="2026-10-26T13:00:00Z") ] | .[0].artifacts[0].expired=true'; invoke; check 'newest valid custody supersedes expired older checkpoint' 0
 grep -q 'checkpoint_id=401' "$work/output"
-reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401 | .expired=true) ]'; invoke; check 'newest expired custody never falls back' 1
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [ (.[0].artifacts[0] | .id=401 | .created_at="2026-10-26T13:00:00Z" | .expired=true) ]'; invoke; check 'newest expired custody never falls back' 1
 reset_case; checkpoint; mutate inventory '.[0].artifacts += [(.[0].artifacts[0] | .id=450 | .name="Cadence-Publication-100-300-200-1" | .digest="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")]'; invoke; check 'publication receipt custody restored by trusted exact ID' 0
 grep -q 'publication_checkpoint_id=450' "$work/output"
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [(.[0].artifacts[0] | .id=399 | .created_at="2026-10-26T13:00:00Z" | .name="Cadence-Checkpoint-100-300-200-1-finish")]'; invoke; check 'lower opaque ID can be newest custody' 0
+grep -q 'checkpoint_id=399' "$work/output"
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [(.[0].artifacts[0] | .id=399 | .created_at="2026-10-26T13:00:00Z" | .expired=true)]'; invoke; check 'newer expired lower ID never falls back' 1
+reset_case; checkpoint; mutate inventory '.[0].artifacts += [(.[0].artifacts[0] | .id=399 | .name="Cadence-Checkpoint-100-300-200-1-finish")]'; invoke; check 'phase order breaks same-second same-producer tie' 0
+grep -q 'checkpoint_id=399' "$work/output"
+reset_case; checkpoint; mutate inventory '.[0].artifacts[0].created_at=null'; invoke; check 'missing creation time cannot select by ID' 1
+reset_case; checkpoint; mutate owner '.run_number=null'; invoke; check 'missing producer order fails closed' 1
 printf '%s release-selection contracts passed (synthetic only).\n' "$cases"
