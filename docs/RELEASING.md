@@ -48,7 +48,7 @@ The lifecycle tests create and remove only uniquely named disposable jobs. The c
 
 The signing job explicitly selects Xcode 26.3, matching Hikyo's working notary client. The selected version is available on both configured hosted runner images: [Apple Silicon](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md) and [Intel](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md). The local validation host used Xcode 27.1; hosted execution with Xcode 26.3 remains a separate check.
 
-Set up the `apple-signing` GitHub environment before dispatching this workflow. Allow the `main` branch for standalone distributions and version tags matching `v*` for production. Configure the desired required reviewer in repository Settings. Credentials use the same names as Agent Job Queue:
+Set up the `apple-signing` GitHub environment before dispatching this workflow. Allow the `main` branch for standalone distributions and production releases. Configure the desired required reviewer in repository Settings. Credentials use the same names as Agent Job Queue:
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ gh secret set APPLE_DEVELOPER_ID_P12_PASSWORD --repo "$repo" --env apple-signing
 gh secret set APPLE_NOTARY_KEY_P8 --repo "$repo" --env apple-signing < "$NOTARY_PRIVATE_KEY_P8"
 ```
 
-The password command prompts for its value. Set the five public variables through the same environment's Settings, or `gh variable set NAME --repo "$repo" --env apple-signing` using its interactive value prompt. These instructions do not export a private key from a keychain or bypass its access controls.
+The password command prompts for its value. Set the four public variables through the same environment's Settings, or `gh variable set NAME --repo "$repo" --env apple-signing` using its interactive value prompt. These instructions do not export a private key from a keychain or bypass its access controls.
 
 The signing wrapper imports the identity into a private temporary keychain, grants codesign access, removes raw credentials from the child environment, and restores the original user keychain search list on success, error, or cancellation. It does not change the default or system keychain. Cleanup failures fail the operation.
 
@@ -87,14 +87,22 @@ Apple's history will show Cadence, the version, architecture, and submission sta
 
 ## Production releases
 
-`.github/workflows/release.yml` runs on a pushed version tag, or a manual dispatch **on that existing tag**. Tags must use exactly `vMAJOR.MINOR.PATCH`, match `CFBundleShortVersionString` in `Resources/Info.plist`, and resolve to the workflow's exact commit on current `main`. A release or draft with the same tag blocks the run before Apple submission. Published stable versions must be older than the candidate. Branch dispatches, prerelease suffixes, moved tags, and version mismatches fail preflight.
+`.github/workflows/release.yml` provides **Release latest main**, a manual workflow with **no inputs**. In GitHub Actions, select this workflow, choose `main`, and click **Run workflow**. From a checkout of this repository, the equivalent is:
+
+```sh
+gh workflow run release.yml --ref main
+```
+
+Preflight checks out the latest remote `main` when the job starts, pins its exact SHA, and reads `CFBundleShortVersionString` from `Resources/Info.plist` to derive `vMAJOR.MINOR.PATCH`. Every native test, universal build, signing job, manifest, and publication uses that selected SHA, even if `main` advances or the dispatch event names an older commit. Dispatching workflow code from another branch fails before distribution. Production no longer starts on tag pushes and does not require a pre-created tag.
+
+The version must already be an unused stable version on `main`; this workflow does not change source or bump versions. A published release or draft for that version blocks the run before Apple submission, as does a tag pointing to another commit. Older or equal published stable versions cannot be released again. An existing tag is reusable only when it identifies the selected commit and has no release or draft.
 
 The production flow is:
 
-1. Validate tag identity, current main ancestry, version, and existing releases with read-only permissions.
+1. Select and record the latest main SHA and app version. Validate main ancestry, any existing tag, and release eligibility with read-only permissions.
 2. Call the distribution workflow to run both native CI jobs, build the universal app and installer, sign, notarize, staple, verify mounted/copied installation, and clean credentials. Recheck production eligibility immediately before loading Apple credentials.
 3. Transfer the signed distribution by the immutable artifact ID returned from that same run. Missing IDs fail rather than downloading an arbitrary artifact set.
-4. Enter the `production` environment in a separate publication job. This is the only job with `contents: write`; it receives no Apple credentials. Recheck the tag and release eligibility, validate the exact four-file payload, manifest provenance, and canonical checksums.
+4. Enter the `production` environment in a separate publication job. This is the only job with `contents: write`; it receives no Apple credentials. Recheck release eligibility, validate the exact four-file payload, manifest provenance, and canonical checksums. Create a missing lightweight version tag through GitHub's API, targeting only the selected SHA, then fetch and verify it. Conflicting tags are never forced or replaced. A tag API failure stops the run without automatic retry; reconcile remote state before trying again.
 5. Create a draft release with generated release notes. Upload only the universal DMG, app ZIP, `SHA256SUMS`, and `distribution.json`. Download the draft assets and compare their bytes with the verified local payload before publishing a stable release marked Latest. Read back the published metadata, tag, and asset bytes, and record the release URL in the job summary.
 
 Production runs are serialized across versions, and signing is serialized with standalone distributions. An older version cannot replace a newer stable release as Latest. Existing releases and assets are never overwritten. A failed upload or verification leaves its draft for diagnosis; it does not publish a partial release. An error after publication is reported as a failed readback, not rolled back or silently republished.
@@ -102,36 +110,27 @@ Production runs are serialized across versions, and signing is serialized with s
 Before the first release:
 
 1. Push the source and workflows to `main` and verify hosted CI. Require `ci-required` in branch protection.
-2. Configure the `apple-signing` environment and credentials above. Allow version-tag deployments as well as `main`.
-3. Configure a `production` environment permitting version tags and the desired release reviewer. Ensure repository Actions policy permits the publication job's `contents: write` token. No separate publication PAT is required.
-4. Restrict version-tag creation to release maintainers and protect tags from updates/deletion with repository rulesets. Enable GitHub immutable releases where available. Environment reviewers should verify the tagged commit, because workflow code is loaded from that tag.
+2. Configure the `apple-signing` environment and credentials above, permitting `main` deployments.
+3. Configure a `production` environment permitting `main` and the desired release reviewer. Ensure repository Actions policy permits the publication job's `contents: write` token. No separate publication PAT is required.
+4. Protect version tags from updates/deletion with repository rulesets while allowing the Actions token to create release tags. Enable GitHub immutable releases where available. Environment reviewers should verify the selected source SHA in the preflight summary and the exact artifacts from that run.
 
-Once the intended version change and workflows are on `main`, create and push a signed version tag from a clean checkout of that commit:
-
-```sh
-(
-set -euo pipefail
-git fetch origin main
-test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-test -z "$(git status --porcelain)"
-version=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
-git tag -s "v$version" -m "Release Cadence $version"
-git verify-tag "v$version"
-git push origin "refs/tags/v$version"
-)
-```
-
-Pushing that tag starts the full production pipeline and may publish the release after configured environment approvals. Successful output is a stable GitHub release containing `Cadence-Installer-<version>-universal.dmg`, `Cadence-App-<version>-universal.zip`, `SHA256SUMS`, and `distribution.json`.
-
-For an existing tag whose earlier run never submitted to Apple or created a release, manual dispatch is available. Replace `v0.2.0` with the intended existing tag:
-
-```sh
-gh workflow run release.yml --ref v0.2.0
-```
+After the intended version and workflows are on `main`, running the workflow starts the full flow through publication, subject to the configured environment approvals. Successful output is a stable GitHub release containing `Cadence-Installer-<version>-universal.dmg`, `Cadence-App-<version>-universal.zip`, `SHA256SUMS`, and `distribution.json`. The ZIP and DMG contain the bundled Cadence icon.
 
 Do not blindly rerun after a timeout, partial signing run, or failed publication. First inspect retained notarization receipts and any draft. Resolve pending Apple UUIDs before another submission. Reconcile a failed draft explicitly; the helper refuses to reuse or overwrite it. A manually dispatched run still executes all gates and submits fresh artifacts, so it is not a resume command. No automatic upload/submission retries are added by the production workflow.
 
 The scripts' synthetic contract tests exercise publication without creating real tags, Apple submissions, drafts, or releases. GitHub's draft lifecycle is documented in [release creation](https://cli.github.com/manual/gh_release_create) and [release editing](https://cli.github.com/manual/gh_release_edit).
+
+## App icon
+
+`Resources/Cadence.icns` contains all standard macOS icon sizes, from 16 pixels through 1024 pixels. `build-app.sh` copies this checked-in asset into every app bundle before signing; `CFBundleIconFile` already points to it. `Resources/Cadence.png` is the 1024-pixel transparent preview. The menu bar retains a monochrome template waveform for native light/dark rendering.
+
+To regenerate both assets on macOS from the AppKit artwork:
+
+```sh
+swift scripts/make-icon.swift Resources/Cadence.icns Resources/Cadence.png
+```
+
+No network access or image-generation service is required. Commit both assets when changing the artwork.
 
 ## Pending or failed Apple submissions
 
@@ -146,7 +145,18 @@ xcrun notarytool wait "$SUBMISSION_ID" --keychain-profile "$NOTARY_KEYCHAIN_PROF
 
 Resolve that submission before requesting another signed build. A valid Developer ID signature alone is not notarization acceptance. No ad-hoc fallback is used in the signed workflow.
 
-## Validation and current activation state
+## Latest-main pipeline validation
+
+Validated locally on 2026-10-26 with Xcode 27.1 on Apple Silicon:
+
+- `./scripts/ci.sh` passed: Actionlint, ShellCheck, Bash syntax, all 166 synthetic contracts (19 DMG, 14 credentials, 36 notarization, 12 artifact handoff, 36 release preflight, 49 publication), all 59 Swift tests including both real LaunchAgent lifecycle tests, and a native app build.
+- `./scripts/package-macos.sh universal` passed: Apple Silicon and Intel compilation, exact executable slices, mounted installer layout, drag-copy app signature, and the app/installer/manifest checksums.
+- Iconutil decoded all ten standard icon representations. The universal app's icon exactly matched the checked-in ICNS, and its bundle metadata selected that icon. The transparent 1024-pixel PNG was visually inspected.
+- `git diff --check` passed. No application behavior or Swift package code changed.
+
+Repository configuration was checked read-only: there were no GitHub environments and no repository Actions secrets or variables configured. Create `apple-signing` and `production` and supply the documented signing credentials before dispatching a production release. This change was validated locally; hosted CI, Developer ID signing, Apple acceptance, stapling/Gatekeeper, and public release publication were not executed. The locally built installer is ad-hoc signed and not notarized. Native Intel execution remains a hosted CI gate.
+
+## Initial implementation validation
 
 Local validation passed on Apple Silicon, macOS 27.0.1, Xcode 27.1:
 

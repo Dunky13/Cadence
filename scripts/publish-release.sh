@@ -10,15 +10,18 @@ tag=$1 input=$2
 version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 [[ $tag =~ $version_pattern ]] || fail 'Expected a stable vMAJOR.MINOR.PATCH tag.'
 version=${tag#v}
-source_commit=${GITHUB_SHA:-}
+source_commit=${SOURCE_COMMIT:-${GITHUB_SHA:-}}
 repo=${GITHUB_REPOSITORY:-}
-[[ $source_commit =~ ^[0-9a-f]{40}$ ]] || fail 'GITHUB_SHA must name the exact source commit.'
+[[ $source_commit =~ ^[0-9a-f]{40}$ ]] || fail 'A full selected source commit is required.'
+[[ -z ${RELEASE_TAG:-} || $RELEASE_TAG == "$tag" ]] || fail 'Selected release tag differs from the publication tag.'
 [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail 'GITHUB_REPOSITORY must identify the destination repository.'
 [[ -n ${GH_TOKEN:-${GITHUB_TOKEN:-}} ]] || fail 'A GitHub publication token is required.'
 [[ ${GH_HOST:-github.com} == github.com ]] || fail 'This release flow targets github.com.'
 for tool in gh git jq shasum; do command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"; done
-[[ $(git rev-parse --verify HEAD) == "$source_commit" ]] || fail 'Checkout differs from GITHUB_SHA.'
-[[ $(git rev-parse --verify "refs/tags/$tag^{commit}") == "$source_commit" ]] || fail 'Local tag differs from GITHUB_SHA.'
+[[ $(git rev-parse --verify HEAD) == "$source_commit" ]] || fail 'Checkout differs from the selected source commit.'
+if [[ -z ${RELEASE_TAG:-} ]]; then
+    [[ $(git rev-parse --verify "refs/tags/$tag^{commit}") == "$source_commit" ]] || fail 'Local tag differs from the selected source commit.'
+fi
 [[ -d $input && ! -L $input ]] || fail 'Distribution directory is missing or is a symlink.'
 input=$(cd "$input" && pwd -P)
 archive="Cadence-App-$version-universal.zip"
@@ -100,7 +103,7 @@ verify_remote_tag() {
     done
     [[ $sha == "$source_commit" ]] || fail 'Remote tag no longer identifies the verified source commit.'
 }
-verify_remote_tag
+if [[ -z ${RELEASE_TAG:-} ]]; then verify_remote_tag; fi
 # REST lookup by tag does not find pending draft tags. List all pages instead.
 gh api --hostname github.com --paginate --slurp "repos/$repo/releases?per_page=100" \
     > "$work/releases.json" 2> "$work/api-error" || fail 'Unable to check existing releases and drafts.'
@@ -123,6 +126,11 @@ if [[ $result == 0 ]]; then
         if [[ ${#left} -lt ${#right} || ( ${#left} -eq ${#right} && $left < $right ) ]]; then break; fi
     done
     [[ $newer == true ]] || fail 'Candidate must be newer than the latest stable release.'
+fi
+# Only a fully verified signed payload can reach automatic tag creation.
+if [[ -n ${RELEASE_TAG:-} ]]; then
+    "$(dirname "$0")/verify-release-tag.sh" --create-tag
+    verify_remote_tag
 fi
 # Capture the new draft's ID directly; tag-based REST lookup is for published releases.
 jq -n --arg tag "$tag" --arg source "$source_commit" \

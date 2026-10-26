@@ -6,6 +6,12 @@ on:
     branches: [main]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      source_sha:
+        description: Exact source commit to test and package
+        required: false
+        default: ''
+        type: string
     outputs:
       artifact_id:
         description: Immutable universal build artifact from this run
@@ -15,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-ci-${{ github.workflow }}-${{ github.ref }}
+  group: macos-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_sha || github.sha }}
   cancel-in-progress: true
 
 env:
@@ -40,6 +46,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_sha || github.sha }}
       - name: Install validation tools
         run: brew install actionlint shellcheck jq
       - name: Validate workflows, failure contracts, real LaunchAgents, and native build
@@ -56,6 +63,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_sha || github.sha }}
       - name: Install packaging metadata prerequisite
         run: brew install jq
       - name: Build both architectures and verify mounted installer and copied app
@@ -66,7 +74,7 @@ jobs:
         id: upload
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Cadence-macOS-universal-${{ github.sha }}
+          name: Cadence-macOS-universal-${{ inputs.source_sha || github.sha }}
           path: dist/packages/*-universal-local/*
           if-no-files-found: error
           retention-days: 7

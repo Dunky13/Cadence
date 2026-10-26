@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 
-guard CommandLine.arguments.count == 2 else {
-    fputs("Usage: swift scripts/make-icon.swift output.icns\n", stderr)
+guard (2...3).contains(CommandLine.arguments.count) else {
+    fputs("Usage: swift scripts/make-icon.swift output.icns [preview.png]\n", stderr)
     exit(2)
 }
 let destination = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -23,17 +23,31 @@ for size in [16, 32, 128, 256, 512] {
         NSGraphicsContext.current = context
         context.cgContext.scaleBy(x: CGFloat(pixels) / 1024, y: CGFloat(pixels) / 1024)
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.15)
-        shadow.shadowBlurRadius = 22
-        shadow.shadowOffset = NSSize(width: 0, height: -10)
+        shadow.shadowColor = NSColor(red: 0.25, green: 0.09, blue: 0.04, alpha: 0.32)
+        shadow.shadowBlurRadius = 26
+        shadow.shadowOffset = NSSize(width: 0, height: -14)
         shadow.set()
         let tile = NSBezierPath(roundedRect: NSRect(x: 80, y: 80, width: 864, height: 864), xRadius: 200, yRadius: 200)
-        NSColor(red: 0.97, green: 0.95, blue: 0.91, alpha: 1).setFill()
+        NSColor(red: 0.63, green: 0.23, blue: 0.12, alpha: 1).setFill()
         tile.fill()
         NSShadow().set()
-        NSColor(red: 0.76, green: 0.34, blue: 0.17, alpha: 1).setStroke()
+        guard let glaze = NSGradient(starting: NSColor(red: 0.85, green: 0.43, blue: 0.25, alpha: 1),
+                                     ending: NSColor(red: 0.58, green: 0.20, blue: 0.12, alpha: 1)) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        glaze.draw(in: tile, angle: -90)
+        let rim = NSBezierPath(roundedRect: NSRect(x: 84, y: 84, width: 856, height: 856), xRadius: 196, yRadius: 196)
+        rim.lineWidth = 4
+        NSColor.white.withAlphaComponent(0.23).setStroke()
+        rim.stroke()
+        let symbolShadow = NSShadow()
+        symbolShadow.shadowColor = NSColor(red: 0.31, green: 0.10, blue: 0.04, alpha: 0.28)
+        symbolShadow.shadowBlurRadius = 6
+        symbolShadow.shadowOffset = NSSize(width: 0, height: -5)
+        symbolShadow.set()
+        NSColor(red: 1, green: 0.97, blue: 0.89, alpha: 1).setStroke()
         let wave = NSBezierPath()
-        wave.lineWidth = 52
+        wave.lineWidth = 60
         wave.lineCapStyle = .round
         wave.lineJoinStyle = .round
         wave.move(to: NSPoint(x: 243, y: 510))
@@ -48,6 +62,9 @@ for size in [16, 32, 128, 256, 512] {
         let name = "icon_\(size)x\(size)\(scale == 2 ? "@2x" : "").png"
         guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
         try png.write(to: iconset.appendingPathComponent(name))
+        if pixels == 1024, CommandLine.arguments.count == 3 {
+            try png.write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
+        }
     }
 }
 let process = Process()

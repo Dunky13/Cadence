@@ -10,23 +10,27 @@ cat > "$work/bin/git" <<'STUB'
 set -euo pipefail
 printf 'git %s\n' "$*" >> "$TAG_CALLS"
 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+tag=${RELEASE_TAG:-$GITHUB_REF_NAME}
 case "$1" in
     rev-parse)
         if [[ ${TAG_SCENARIO:-} == wrong-checkout && $3 == HEAD ]]; then commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
         if [[ ${TAG_SCENARIO:-} == wrong-local-tag && $3 != HEAD ]]; then commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
         printf '%s\n' "$commit" ;;
-    fetch) [[ ${TAG_SCENARIO:-} != fetch-error ]] ;;
+    fetch)
+        [[ ${TAG_SCENARIO:-} != fetch-error ]] || exit 1
+        if [[ $* == *refs/tags/* ]]; then touch "$TAG_STATE/fetched"; fi ;;
     merge-base) [[ ${TAG_SCENARIO:-} != off-main ]] ;;
     ls-remote)
         case "${TAG_SCENARIO:-}" in
             remote-error) exit 1 ;;
-            moved-tag) printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/%s\n' "$GITHUB_REF_NAME" ;;
+            moved-tag) printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/%s\n' "$tag" ;;
             annotated-tag)
-                printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/%s\n' "$GITHUB_REF_NAME"
-                printf '%s\trefs/tags/%s^{}\n' "$commit" "$GITHUB_REF_NAME" ;;
-            malformed-tag) printf 'not-a-sha\trefs/tags/%s\n' "$GITHUB_REF_NAME" ;;
-            missing-tag) : ;;
-            *) printf '%s\trefs/tags/%s\n' "$commit" "$GITHUB_REF_NAME" ;;
+                printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/%s\n' "$tag"
+                printf '%s\trefs/tags/%s^{}\n' "$commit" "$tag" ;;
+            malformed-tag) printf 'not-a-sha\trefs/tags/%s\n' "$tag" ;;
+            missing-tag|create-failure|wrong-created-tag)
+                if [[ -e $TAG_STATE/created ]]; then printf '%s\trefs/tags/%s\n' "$commit" "$tag"; fi ;;
+            *) printf '%s\trefs/tags/%s\n' "$commit" "$tag" ;;
         esac ;;
     *) exit 99 ;;
 esac
@@ -35,6 +39,16 @@ cat > "$work/bin/gh" <<'STUB'
 #!/bin/bash
 set -euo pipefail
 printf 'gh %s\n' "$*" >> "$TAG_CALLS"
+if [[ $* == api\ --hostname\ github.com\ --method\ POST\ repos/*/git/refs\ --input\ * ]]; then
+    [[ ${TAG_SCENARIO:-} != create-failure ]] || exit 1
+    for argument in "$@"; do input=$argument; done
+    jq -e '.ref == ("refs/tags/" + env.RELEASE_TAG) and .sha == env.SOURCE_COMMIT' "$input" >/dev/null
+    touch "$TAG_STATE/created"
+    sha=$SOURCE_COMMIT
+    if [[ ${TAG_SCENARIO:-} == wrong-created-tag ]]; then sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
+    jq -n --arg ref "refs/tags/$RELEASE_TAG" --arg sha "$sha" '{ref:$ref,object:{type:"commit",sha:$sha}}'
+    exit
+fi
 [[ $* == api\ --paginate\ --slurp\ repos/*/releases\?per_page=100 ]] || exit 99
 [[ ${TAG_SCENARIO:-} != api-error ]] || exit 1
 cat "$TAG_RELEASES"
@@ -53,10 +67,10 @@ new_case() {
 }
 invoke() {
     result=0
-    env PATH="$work/bin:$PATH" TAG_CALLS="$calls" TAG_RELEASES="$releases" \
+    env PATH="$work/bin:$PATH" TAG_CALLS="$calls" TAG_RELEASES="$releases" TAG_STATE="$work/$case_name" \
         GITHUB_REF_TYPE=tag GITHUB_REF="refs/tags/v$version" GITHUB_REF_NAME="v$version" \
         GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GITHUB_REPOSITORY=example/Cadence \
-        TAG_SCENARIO='' "$@" /bin/bash "$root/scripts/verify-release-tag.sh" \
+        SOURCE_COMMIT='' RELEASE_TAG='' TAG_SCENARIO='' "$@" /bin/bash "$root/scripts/verify-release-tag.sh" ${test_mode:+"$test_mode"} \
         > "$work/$case_name/output" 2>&1 || result=$?
 }
 accept() { invoke "$@"; [[ $result == 0 ]] || { cat "$work/$case_name/output" >&2; fail 'valid tag rejected'; }; cases=$((cases + 1)); }
@@ -98,4 +112,30 @@ reject
 new_case newer-release-on-second-page
 printf '[[],[{"tag_name":"v99999999999999999999999999999.0.0","draft":false,"prerelease":false}]]\n' > "$releases"
 reject
+main_context=(GITHUB_REF_TYPE=branch GITHUB_REF=refs/heads/main GITHUB_REF_NAME=main
+    SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa RELEASE_TAG="v$version")
+test_mode=--allow-missing-tag
+new_case main-without-tag; accept "${main_context[@]}" TAG_SCENARIO=missing-tag
+[[ ! -e $work/$case_name/created ]] || fail 'read-only preflight created a tag'
+new_case main-existing-tag; accept "${main_context[@]}"
+new_case main-newer-than-dispatch
+accept "${main_context[@]}" GITHUB_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+new_case main-wrong-checkout; reject "${main_context[@]}" TAG_SCENARIO=wrong-checkout
+new_case main-moved-tag; reject "${main_context[@]}" TAG_SCENARIO=moved-tag
+new_case main-tag-lookup-failure; reject "${main_context[@]}" TAG_SCENARIO=remote-error
+new_case non-main-dispatch; reject "${main_context[@]}" GITHUB_REF=refs/heads/feature
+new_case unpinned-main; reject "${main_context[@]}" SOURCE_COMMIT=''
+test_mode=--create-tag
+new_case create-main-tag; accept "${main_context[@]}" TAG_SCENARIO=missing-tag
+[[ -e $work/$case_name/created && -e $work/$case_name/fetched ]] || fail 'new tag was not created and fetched'
+new_case reuse-exact-main-tag; accept "${main_context[@]}"
+[[ ! -e $work/$case_name/created && -e $work/$case_name/fetched ]] || fail 'existing tag was replaced or not fetched'
+new_case reject-conflicting-tag; reject "${main_context[@]}" TAG_SCENARIO=moved-tag
+[[ ! -e $work/$case_name/created ]] || fail 'conflicting tag was replaced'
+new_case failed-tag-creation; reject "${main_context[@]}" TAG_SCENARIO=create-failure
+new_case mismatched-created-tag; reject "${main_context[@]}" TAG_SCENARIO=wrong-created-tag
+new_case no-tag-for-existing-release
+jq -n --arg tag "v$version" '[[{tag_name:$tag,draft:false,prerelease:false}]]' > "$releases"
+reject "${main_context[@]}" TAG_SCENARIO=missing-tag
+[[ ! -e $work/$case_name/created ]] || fail 'tag created despite existing release'
 printf 'Production tag preflight contracts: %s cases passed; no provider mutations.\n' "$cases"

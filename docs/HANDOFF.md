@@ -2,6 +2,14 @@
 
 Delivery: [PR #1](https://github.com/Dunky13/Cadence/pull/1). Hosted checks and merge status are recorded there.
 
+## PR #2: latest-main releases and app icon
+
+[PR #2](https://github.com/Dunky13/Cadence/pull/2) adds the no-input production entry point and the bundled copper waveform icon. The user authorized merging after green hosted checks and then publishing the notarized release. Local validation passed all 59 Swift tests, 166 synthetic contracts, and universal installer verification. The implementation commit is signed and DCO signed off.
+
+The `apple-signing` and `production` environments now permit only `main`. The four public Apple configuration variables have been copied from the existing Agent Job Queue signing configuration. The three private Apple secrets still require secure provisioning; GitHub does not return existing secret values. Do not dispatch signing until they are configured. The release version is `0.2.0`, taken from the app plist. Hosted CI, merge, Apple acceptance, and public publication must each be checked separately; local ad-hoc packages are not production artifacts.
+
+Merge the exact checked PR head when its native Apple Silicon/Intel, universal packaging, and aggregate checks pass. Then dispatch `release.yml` on `main` without inputs, inspect retained notarization evidence if it fails, and verify the published assets against their final checksums. Never blindly resubmit pending Apple UUIDs or overwrite an existing release/draft.
+
 ## Outcome
 
 A native macOS menu bar utility is implemented and packaged locally. It discovers the logged-in user’s LaunchAgents, describes their execution cadence, displays live launchd status and configured run output, and provides persistent enable/disable controls. It also creates new jobs from cron expressions, saved as native LaunchAgents as requested. The macOS production pipeline is included in the same delivery; Apple submission and public binary release require its separate version-tag flow and environment configuration.
@@ -71,6 +79,6 @@ This version manages user LaunchAgents in the GUI domain. Privileged system Laun
 
 Cron creation supports numeric values, wildcards, lists, ranges, and steps in the five minute/hour/day/month/weekday fields. Names, macros, seconds, wrapping ranges, and advanced extensions are rejected. Calendar times use local time with launchd’s wake behavior. Partial stepped day-of-month/weekday intersections that launchd cannot represent exactly are rejected, and expanded schedules are capped at 4,096 entries.
 
-The latest distribution tooling builds a universal Apple Silicon/Intel app and a drag-and-drop DMG. It includes macOS-only native CI, a protected manual Developer ID/notarization workflow, and a version-tag production pipeline that verifies uploaded draft assets before GitHub publication and reads back published bytes. Submission names include project/version/architecture/stage and receipts retain Apple IDs and CI runs. The complete distribution handoff and activation requirements are in [RELEASING.md](RELEASING.md).
+The latest distribution tooling builds a universal Apple Silicon/Intel app and a drag-and-drop DMG. It includes macOS-only native CI, a protected manual Developer ID/notarization workflow, and the no-input **Release latest main** production workflow. The production workflow pins latest main, derives its version from the app plist, verifies uploaded draft assets before GitHub publication, and reads back published bytes. Its version tag is created only after signed artifacts pass verification. Submission names include project/version/architecture/stage and receipts retain Apple IDs and CI runs. Every app includes the checked-in copper waveform icon. The complete distribution handoff and activation requirements are in [RELEASING.md](RELEASING.md).
 
 Local Swift tests, release failure contracts, universal compilation, mounted installer layout, drag-copy signatures, and checksums passed. The local package is ad-hoc signed and not notarized. Developer ID acceptance, Apple notarization, and execution on macOS 14 remain unqualified. Hosted CI and native Intel results are tracked in the pull request and workflow runs. Configure signing credentials and release environments before using the production pipeline; no Apple submission or public release was performed during local validation.

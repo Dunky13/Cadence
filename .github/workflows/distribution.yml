@@ -16,6 +16,10 @@ on:
       release_tag:
         required: true
         type: string
+      source_sha:
+        description: Exact main commit selected by the production release preflight
+        required: true
+        type: string
     outputs:
       artifact_id:
         description: Immutable verified signed distribution from this run
@@ -30,13 +34,15 @@ concurrency:
 
 jobs:
   verify:
-    if: inputs.authorize_notarization && (github.ref == 'refs/heads/main' || github.ref == format('refs/tags/{0}', inputs.release_tag))
+    if: inputs.authorize_notarization && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
 
   sign:
     name: Developer ID, descriptive notarization, and installer verification
     needs: verify
-    if: inputs.authorize_notarization && (github.ref == 'refs/heads/main' || github.ref == format('refs/tags/{0}', inputs.release_tag)) && needs.verify.result == 'success'
+    if: inputs.authorize_notarization && github.ref == 'refs/heads/main' && needs.verify.result == 'success'
     runs-on: macos-15
     environment: apple-signing
     timeout-minutes: 90
@@ -45,11 +51,13 @@ jobs:
     env:
       # Matches Hikyo's working API-key client instead of the runner default.
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      SOURCE_COMMIT: ${{ inputs.source_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
       - name: Require the immutable build artifact ID
         env:
@@ -66,7 +74,7 @@ jobs:
         if: inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-release-tag.sh
+        run: ./scripts/verify-release-tag.sh --allow-missing-tag
       - name: Verify exact clean build provenance before loading credentials
         env:
           INPUT: ${{ runner.temp }}/cadence-unsigned
@@ -89,7 +97,7 @@ jobs:
           [[ -d dist/.signed-candidate && ! -L dist/.signed-candidate ]]
           [[ ! -e dist/release && ! -L dist/release ]]
           (cd dist/.signed-candidate && shasum -a 256 --check SHA256SUMS)
-          jq -e --arg commit "$GITHUB_SHA" '.schema == "cadence/distribution/v1" and .source_commit == $commit and .architecture == "universal" and .notarization == "Accepted" and .tickets == "stapled and validated"' dist/.signed-candidate/distribution.json
+          jq -e --arg commit "$SOURCE_COMMIT" '.schema == "cadence/distribution/v1" and .source_commit == $commit and .architecture == "universal" and .notarization == "Accepted" and .tickets == "stapled and validated"' dist/.signed-candidate/distribution.json
           mv dist/.signed-candidate dist/release
       - name: Retain notarization IDs, submitted hashes, and Apple diagnostic logs
         if: ${{ always() }}
@@ -103,7 +111,7 @@ jobs:
         id: upload
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Cadence-Signed-macOS-universal-${{ github.sha }}
+          name: Cadence-Signed-macOS-universal-${{ inputs.source_sha || github.sha }}
           path: dist/release/
           if-no-files-found: error
           retention-days: 30
