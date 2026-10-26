@@ -50,16 +50,30 @@ shopt -s nullglob
 printf '%s\n' "$*" >> "$state/calls"
 record() { printf 'event:%s\n' "$1" >> "$state/calls"; }
 metadata() {
-    local draft=true immutable=false
+    local draft=true immutable=false html_ref=v1.2.3
     [[ ! -e $state/published ]] || { draft=false; immutable=true; }
     if [[ $mode == wrong-draft-state && ! -e $state/published ]]; then draft=false; fi
     if [[ $mode == wrong-public-state && -e $state/published ]]; then draft=true; fi
     if [[ ( $mode == mutable-public || $mode == policy-disabled ) && -e $state/published ]]; then immutable=false; fi
-    jq --argjson draft "$draft" --argjson immutable "$immutable" \
+    if [[ $draft == true && $mode != canonical-draft-url ]]; then html_ref=untagged-0123456789abcdef0123; fi
+    jq --argjson draft "$draft" --argjson immutable "$immutable" --arg html_ref "$html_ref" \
         '. + {id:42,draft:$draft,immutable:$immutable,author:{login:"github-actions[bot]",type:"Bot",id:41898282},
-        html_url:("https://github.com/"+env.GITHUB_REPOSITORY+"/releases/tag/v1.2.3")} | del(.generate_release_notes)
+        html_url:("https://github.com/"+env.GITHUB_REPOSITORY+"/releases/tag/"+$html_ref)} | del(.generate_release_notes)
         | if env.PUBLICATION_MODE == "unowned-draft" then .author.login="maintainer"
-          elif env.PUBLICATION_MODE == "spoofed-bot" then .author.id=123 else . end' "$state/create.json"
+          elif env.PUBLICATION_MODE == "spoofed-bot" then .author.id=123 else . end
+        | if $draft then
+            if env.PUBLICATION_MODE == "wrong-url-host" then .html_url="https://example.invalid/releases/tag/untagged-0123456789abcdef0123"
+            elif env.PUBLICATION_MODE == "wrong-url-repository" then .html_url="https://github.com/fixture/Other/releases/tag/untagged-0123456789abcdef0123"
+            elif env.PUBLICATION_MODE == "wrong-url-path" then .html_url="https://github.com/fixture/Cadence/other/untagged-0123456789abcdef0123"
+            elif env.PUBLICATION_MODE == "wrong-draft-suffix" then .html_url="https://github.com/fixture/Cadence/releases/tag/untagged-not-hex"
+            elif env.PUBLICATION_MODE == "short-draft-suffix" then .html_url="https://github.com/fixture/Cadence/releases/tag/untagged-abcd"
+            elif env.PUBLICATION_MODE == "draft-url-query" then .html_url += "?other=1"
+            elif env.PUBLICATION_MODE == "draft-url-fragment" then .html_url += "#other"
+            elif env.PUBLICATION_MODE == "draft-url-newline" then .html_url += "\n"
+            elif env.PUBLICATION_MODE == "null-draft-url" then .html_url=null else . end
+          elif env.PUBLICATION_MODE == "public-draft-url" then
+            .html_url="https://github.com/fixture/Cadence/releases/tag/untagged-0123456789abcdef0123"
+          else . end' "$state/create.json"
 }
 asset_list() {
     local path name id=100 size digest
@@ -274,7 +288,7 @@ reject_before_publish() {
     ! grep -qx event:publish "$state/calls" || fail 'publication reached after a failed gate'
     cases=$((cases + 1))
 }
-for mode in success annotated no-latest lost-create-response lost-upload-response lost-publish-response; do
+for mode in success annotated no-latest lost-create-response lost-upload-response lost-publish-response canonical-draft-url; do
     new_case "$mode"
     invoke
     [[ $result == 0 && -e $state/published ]] || fail 'valid release rejected'
@@ -286,6 +300,16 @@ for mode in success annotated no-latest lost-create-response lost-upload-respons
     grep -qx 'release_url=https://github.com/fixture/Cadence/releases/tag/v1.2.3' "$state/outputs" || fail 'environment URL output missing'
     cases=$((cases + 1))
 done
+for mode in wrong-url-host wrong-url-repository wrong-url-path wrong-draft-suffix short-draft-suffix draft-url-query draft-url-fragment draft-url-newline null-draft-url; do
+    new_case "$mode"
+    reject_before_publish
+    ! grep -qx event:upload "$state/calls" || fail 'invalid draft URL allowed uploads'
+done
+new_case public-draft-url
+invoke
+[[ $result != 0 && -e $state/published ]] || fail 'published draft-only URL was accepted'
+[[ ! -s $state/summary ]] || fail 'invalid public URL claimed success'
+cases=$((cases + 1))
 for mode in wrong-checkout wrong-local-tag wrong-remote-tag existing-release existing-draft lookup-auth lookup-network latest-newer latest-equal latest-malformed latest-big latest-auth; do
     new_case "$mode"
     reject_before_create

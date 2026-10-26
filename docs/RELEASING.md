@@ -70,6 +70,8 @@ Ticket validation uses `scripts/validate-apple-ticket.sh`. It permits at most th
 
 ## Transactional publication and consumer proof
 
+Draft metadata may use the exact stable tag URL or GitHub's observed same-repository `untagged-` route with a 20-character lowercase hexadecimal suffix. The release ID, bot ownership, source/build/origin, canonical marker, tag and asset bytes remain authoritative; the publisher never follows the draft HTML URL. Published metadata must still use the exact stable URL and report `.immutable:true`.
+
 Publication custody requires `PUBLICATION_STATE_DIRECTORY` outside the distribution payload. The workflow owns its durable upload/restore. A standalone operator must preserve that directory before retrying. Unbound or missing terminal failure evidence never authorizes deleting an uncertain upload.
 
 The public asset set remains exactly:

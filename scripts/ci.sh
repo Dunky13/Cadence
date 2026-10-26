@@ -11,6 +11,7 @@ shellcheck -x scripts/*.sh scripts/tests/*.sh
 for script in scripts/*.sh scripts/tests/*.sh; do bash -n "$script"; done
 actionlint .github/workflows/*.yml
 ./scripts/tests/apple-ticket-contracts.sh
+./scripts/tests/startup-cleanup-contracts.sh
 ./scripts/tests/dmg-contracts.sh
 ./scripts/tests/signing-credentials-contracts.sh
 ./scripts/tests/phase-workflow-contracts.sh

@@ -9,10 +9,15 @@ launcher=''
 cleanup() {
     result=$?
     trap - EXIT
-    # Only the process executing our unique copied bundle can be terminated.
+    # Quarantined apps may execute from AppTranslocation. Require our unique
+    # snapshot argument as well as the expected executable before terminating.
     while read -r pid executable; do
-        if [[ $pid =~ ^[1-9][0-9]*$ && $executable == "$app/Contents/MacOS/Cadence" ]]; then
-            kill "$pid" 2>/dev/null || true
+        if [[ $pid =~ ^[1-9][0-9]*$ && ( $executable == "$app/Contents/MacOS/Cadence" ||
+            $executable == */AppTranslocation/*/d/Cadence.app/Contents/MacOS/Cadence ) ]]; then
+            process_arguments=$(ps -p "$pid" -o command= 2>/dev/null) || continue
+            if [[ $process_arguments == "$executable --demo --snapshot $work/startup.png" ]]; then
+                kill "$pid" 2>/dev/null || true
+            fi
         fi
     done < <(ps -axo pid=,comm=)
     if [[ -n $launcher ]]; then kill "$launcher" 2>/dev/null || true; wait "$launcher" 2>/dev/null || true; fi
