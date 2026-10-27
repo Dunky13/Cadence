@@ -1,6 +1,6 @@
 # Cadence unattended Apple release handoff
 
-The user authorized the full endpoint, including immutable public publication, and private reuse of the existing Apple-signing files and Keychain entries. The endpoint is not yet achieved. PRs [#3](https://github.com/Dunky13/Cadence/pull/3), [#4](https://github.com/Dunky13/Cadence/pull/4) and [#5](https://github.com/Dunky13/Cadence/pull/5) are merged. [PR #6](https://github.com/Dunky13/Cadence/pull/6) merged as `90fcecd523011f3b7c0d1da7a96aeca229689b47` with cleanup, explicit failure guards and the narrowly bounded ticket-network retry. Publication remains a retained draft; public native consumers have not run.
+The user authorized the full endpoint, including immutable public publication, and private reuse of the existing Apple-signing files and Keychain entries. PRs #3–#7 are merged. Exact main CI [40422749060](https://github.com/Dunky13/Cadence/actions/runs/40422749060) passed at automation `8b2d4a13c480c935b7855921452a09f48bd4c1b6`. Automatic [release40424220654](https://github.com/Dunky13/Cadence/actions/runs/40424220654) preserved the original build15 and Apple submissions and published immutable [v0.2.0](https://github.com/Dunky13/Cadence/releases/tag/v0.2.0). Both public native consumers passed installed-app Gatekeeper assessments but timed out at LaunchServices. That run failed; completion was skipped. Full runtime qualification is still held.
 
 ## Frozen product and tested automation
 
@@ -62,8 +62,19 @@ Independent review at `911f961141627d873e12d0107dedd5c273d85400` found one P3 in
 
 Use a fresh scheduled or no-input dispatch owner after the repair's successful exact main CI; do not rerun stale GitHub jobs. Attempts greater than one are rejected before credentials/network work. Restore current immutable custody, both existing UUIDs and original submitted bytes. An ambiguous upload remains held for UUID/history reconciliation; missing history or expired custody never authorizes resubmission. Ninety-day retention applies.
 
-Resume draft `424798674` through the publisher's canonical marker and exact-byte checks; do not create another release, replace the tag or recreate submitted artifacts. Upload only missing allowlisted assets, verify the complete draft, then require published `.immutable:true` and exact tag/public bytes. Unknown starter uploads stay untouched; cleanup requires an exact candidate-bound terminal HTTP 502/request/asset receipt. Publication receipts are retained separately.
+Release `424798674` is now public and immutable. Do not create another release, replace the tag or recreate submitted artifacts. Recovery must verify its canonical marker, exact public bytes and `.immutable:true`; only the same candidate may complete qualification. Signed custody `12698094129` has outer ZIP digest `sha256:dfa106f84fc8bc6b0532d7a0bcd398584d683ac56c28d3a6a7098e0966ea2eb0`; all four inner hashes match the independently downloaded public assets:
 
-The remaining endpoint gates are repaired-automation main CI, real hosted same-candidate continuation, immutable publication, both arm64/Intel public download/quarantine/install/Gatekeeper/LaunchServices checks and completion custody. Expected assets are `Cadence-App-0.2.0-universal.zip`, `Cadence-Installer-0.2.0-universal.dmg`, `SHA256SUMS` and `distribution.json`. Minimum-macOS-14 runtime remains unrun; macOS 15 does not establish that fact.
+| Asset | Public ID | SHA-256 |
+| --- | --- | --- |
+| Cadence-App-0.2.0-universal.zip | 679902125 | `e6f45f90d66a707f458a46dfb54f94483be117699c789392ab2dfb310d1e27e6` |
+| Cadence-Installer-0.2.0-universal.dmg | 679902195 | `6fe5ac05bc5019016f1e37fcec23a2bd22dc2fad45ed2860a9ddeb9efbbc49bf` |
+| SHA256SUMS | 679902250 | `a4a003ddd24717de919d4010c21839c1f100c0ef0ac59fc28309bb9f2e7e6f67` |
+| distribution.json | 679902310 | `b791793da107e83c5a12806f65bf6629ef3ddfbeea7db7d0307b14eabd91f694` |
+
+The actual arm64 job121927398357 and Intel job121927398378 both downloaded these public bytes without credentials, added browser-style quarantine and passed tickets/signatures/Gatekeeper before the30-second launch timeout. Hosted cause is not yet confirmed. A separate same-byte local probe records a first-open consent wait, but it does not establish hosted prompt identity. No consent was granted or security setting changed. Completion121927772175 correctly stayed skipped.
+
+The current diagnostic change captures metadata/signing identity/hash, unchanged quarantine, exact owned launch/process/snapshot state, read-only GUI/automation status and Cadence-scoped policy events before cleanup. Diagnostic collection cannot change the original failing exit status or approve UI. The next tested-main continuation must reuse the same public release, candidate bytes and both submission UUIDs. First collect actual hosted failure evidence; consider one strictly bound ordinary Open interaction only if an existing authorized UI capability and exact normal prompt are established. Do not override a warning, change TCC/security settings, alter quarantine or substitute a direct-binary launch.
+
+Remaining endpoint gates are both actual native public LaunchServices startups, completion custody and strict final recovery/publication verification. Minimum-macOS14 runtime remains unrun; macOS15 does not establish that fact.
 
 Safe frozen settings, raw logs, exact custody archives and independent diagnostics are local chat deliverables outside version control. The final chat report provides their actual paths and hashes. Its standalone HTML stays local-only. Preserve original failures and distinguish source/local checks, hosted CI, actual Apple/trust gates and public-consumer qualification.
