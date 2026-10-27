@@ -34,6 +34,18 @@ final class ObserverTests: XCTestCase {
         let screenshot: String
         let windowID: UInt32?
     }
+    struct CaptureResult {
+        let imageAvailable, complete: Bool
+    }
+    struct ObservationProgress {
+        private(set) var imageAvailable = false
+        private(set) var complete = true
+        var observed: Bool { imageAvailable && complete }
+        mutating func include(_ sample: CaptureResult) {
+            imageAvailable = imageAvailable || sample.imageAvailable
+            complete = complete && sample.complete
+        }
+    }
     struct Observation: Codable {
         let binding: Binding
         let launcherPID: Int32
@@ -42,6 +54,7 @@ final class ObserverTests: XCTestCase {
         let windows: [Window]
         let unavailableOwners: [Owner]
         let limited: Bool
+        let complete: Bool
         let interpretation: String
     }
 
@@ -96,7 +109,7 @@ final class ObserverTests: XCTestCase {
         try process.run()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return "" }
+        guard process.terminationStatus == 0 else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -109,19 +122,23 @@ final class ObserverTests: XCTestCase {
             let executable = String(fields[1])
             guard executable == original || (executable.contains("/AppTranslocation/") && executable.hasSuffix("/d/Cadence.app/Contents/MacOS/Cadence")) else { continue }
             let arguments = try ps(["-p", String(pid), "-o", "command="]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !arguments.isEmpty else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
             guard arguments == "\(executable) --demo --snapshot \(binding.snapshotPath)" else { continue }
             let app = URL(fileURLWithPath: executable).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             guard validCandidate(app, binding) else { throw NSError(domain: "CandidateIdentityMismatch", code: 1) }
             let state = try ps(["-p", String(pid), "-o", "stat="]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !state.isEmpty else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
             owned.append(OwnedProcess(pid: pid, executable: executable, state: state))
         }
         return owned
     }
 
-    private func systemOwners() -> [Owner] {
+    private func systemOwners() throws -> [Owner] {
         // Discover actual owners on this image. No assumed security-agent name,
         // button title, or OS-version-specific prompt classification.
-        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            throw NSError(domain: "SystemWindowQueryUnavailable", code: 1)
+        }
         let visible = Set(windows.compactMap { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value })
         let running = NSWorkspace.shared.runningApplications
         return running.compactMap { app -> Owner? in
@@ -198,18 +215,20 @@ final class ObserverTests: XCTestCase {
         return (id, png)
     }
 
-    private func capture(_ binding: Binding, _ launch: Launch, index: Int) async throws -> Bool {
+    private func capture(_ binding: Binding, _ launch: Launch, index: Int) async throws -> CaptureResult {
         guard validCandidate(URL(fileURLWithPath: binding.copiedPath), binding) else {
             throw NSError(domain: "CopiedCandidateIdentityMismatch", code: 1)
         }
         let owned = try ownedProcesses(binding)
-        let owners = systemOwners()
+        let owners = try systemOwners()
         var windows: [Window] = []
         var unavailable: [Owner] = []
         var images: [(String, Data)] = []
         var limited = owners.count > 16
         for owner in owners.prefix(16) {
-            guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else { continue }
+            guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else {
+                unavailable.append(owner); continue
+            }
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
             do {
                 let elements = proxy.windows.allElementsBoundByIndex
@@ -229,7 +248,9 @@ final class ObserverTests: XCTestCase {
                         isolated = try? await isolatedWindowImage(owner, element, tree)
                     }
                     let name = isolated == nil ? "" : "system-\(index)-\(owner.pid)-\(number).png"
-                    guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else { continue }
+                    guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else {
+                        unavailable.append(owner); continue
+                    }
                     windows.append(Window(owner: owner, tree: tree, screenshot: name, windowID: isolated?.0))
                     if let isolated { images.append((name, isolated.1)) }
                 }
@@ -240,13 +261,14 @@ final class ObserverTests: XCTestCase {
         }
         // A system window can be temporally correlated to this launch; its tree
         // alone does not prove that it belongs to Cadence or classify consent.
+        let complete = !limited && unavailable.isEmpty && windows.allSatisfy { !$0.screenshot.isEmpty }
         let observation = Observation(binding: binding, launcherPID: launch.launcherPID,
             capturedUTC: ISO8601DateFormatter().string(from: Date()), ownedProcesses: owned,
-            windows: windows, unavailableOwners: unavailable, limited: limited,
+            windows: windows, unavailableOwners: unavailable, limited: limited, complete: complete,
             interpretation: "Read-only system UI observation; window ownership is Apple-signature/PID bound. Candidate causality and button meaning are unclassified. No runtime acceptance.")
         try write(observation, to: evidence.appendingPathComponent("observation-\(index).json"))
         for (name, data) in images { try data.write(to: evidence.appendingPathComponent(name), options: .atomic) }
-        return !images.isEmpty
+        return CaptureResult(imageAvailable: !images.isEmpty, complete: complete)
     }
 
     func testObserveExistingLaunch() async throws {
@@ -254,7 +276,7 @@ final class ObserverTests: XCTestCase {
             try await observeExistingLaunch()
         } catch {
             if let evidence {
-                let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD", "InvalidLauncher"]
+                let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD", "ProcessQueryUnavailable", "SystemWindowQueryUnavailable", "InvalidLauncher"]
                 let domain = (error as NSError).domain
                 let reason = known.contains(domain) ? domain : "native-query-or-protocol-failure"
                 try? text("HOLD: \(reason); no UI action or permission grant.\n", to: evidence.appendingPathComponent("session.txt"))
@@ -285,9 +307,13 @@ final class ObserverTests: XCTestCase {
         // Forces the supported test-control session to initialize BEFORE launch.
         // This image is discarded. Session/permission failure cannot mark ready.
         _ = XCUIScreen.main.screenshot().pngRepresentation
-        for owner in systemOwners().prefix(16) {
+        let preflightOwners = try systemOwners()
+        guard preflightOwners.count <= 16 else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
+        for owner in preflightOwners {
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
-            for element in proxy.windows.allElementsBoundByIndex.prefix(8) {
+            let elements = proxy.windows.allElementsBoundByIndex
+            guard elements.count <= 8 else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
+            for element in elements {
                 var budget = 1024
                 let tree = safeTree(try element.snapshot(), budget: &budget)
                 guard !tree.truncated else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
@@ -305,17 +331,16 @@ final class ObserverTests: XCTestCase {
         let launch = try read(Launch.self, "launch.json")
         guard launch.launcherPID > 1 else { throw NSError(domain: "InvalidLauncher", code: 1) }
         let began = Date()
-        var safeWindowObserved = false
+        var progress = ObservationProgress()
         for (index, delay) in [0.0, 8.0, 22.0].enumerated() {
             while Date().timeIntervalSince(began) < delay {
                 if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
                 try await Task.sleep(for: .milliseconds(100))
             }
-            let captured = try await capture(binding, launch, index: index)
-            safeWindowObserved = safeWindowObserved || captured
+            progress.include(try await capture(binding, launch, index: index))
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
         }
-        let status = safeWindowObserved
+        let status = progress.observed
             ? "Observed: read-only system window tree/screenshot captured. Dialog identity/cause remain unclassified; original startup result is authoritative.\n"
             : "HOLD: no safe Apple system window tree/screenshot pair available. Partial observations retained; dialog unavailable.\n"
         try text(status, to: evidence.appendingPathComponent("session.txt"))

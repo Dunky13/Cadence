@@ -15,6 +15,7 @@ actionlint .github/workflows/*.yml
 ./scripts/tests/startup-failure-contracts.sh
 ./scripts/tests/launch-ui-observer-contracts.sh
 ./scripts/tests/observer-tree-contracts.sh
+./scripts/tests/observer-capture-contracts.sh
 # Compile the independent QA fixture/test runner, never execute its UI session.
 observer_build=$(mktemp -d "${TMPDIR:-/tmp}/cadence-observer-ci.XXXXXX")
 rmdir "$observer_build"

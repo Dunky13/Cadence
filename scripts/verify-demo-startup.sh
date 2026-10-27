@@ -12,7 +12,8 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-startup.XXXXXX")
 launcher=''
 diagnostic_launcher=''
 cleanup() {
-    result=$?
+    product_result=$?
+    result=$product_result
     trap - EXIT
     # Finish owned teardown if another handled signal arrives during diagnostics.
     # Preserve an existing failure; cancellation must still turn success into failure.
@@ -25,7 +26,9 @@ cleanup() {
             if [[ $result == 0 ]]; then result=1; fi
         fi
     fi
-    if [[ $result != 0 && -n ${diagnostic_launcher:-$launcher} && -n ${INSTALL_EVIDENCE_DIR:-} ]]; then
+    # A valid startup PNG stays the sole consumer artifact if only QA teardown
+    # failed. That failure belongs to the separate observer HOLD evidence.
+    if [[ $product_result != 0 && -n ${diagnostic_launcher:-$launcher} && -n ${INSTALL_EVIDENCE_DIR:-} ]]; then
         "$diagnostic_script" "$app" "$work" "${diagnostic_launcher:-$launcher}" || \
             printf 'Could not retain startup failure diagnostics; original failure is preserved.\n' >&2
     fi

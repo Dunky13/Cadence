@@ -187,21 +187,35 @@ source "$CLEANUP_SCRIPT"
 app="$FIXTURE/Cadence.app"
 work="$FIXTURE/scratch"
 launcher=''
+diagnostic_launcher=900
+diagnostic_script="$FIXTURE/diagnostic.sh"
 launch_ui_finish() { observer_cleanup_failed=true; return 1; }
 ps() { return 0; }
 trap cleanup EXIT
+if [[ $FIXTURE_STATUS == 0 ]]; then
+    printf 'SYNTHETIC startup snapshot\n' > "$INSTALL_EVIDENCE_DIR/startup-$(uname -m).png"
+fi
 exit "$FIXTURE_STATUS"
 DRIVER
 for shell_mode in -e +e; do
     for original in 0 42; do
         fixture="$work/failed-teardown-$shell_mode-$original"
-        mkdir -p "$fixture/scratch"
+        mkdir -p "$fixture/scratch" "$fixture/evidence"
+        cat > "$fixture/diagnostic.sh" <<'STUB'
+#!/bin/bash
+printf 'SYNTHETIC startup failure\n' > "$INSTALL_EVIDENCE_DIR/startup-failure-$(uname -m).txt"
+STUB
+        chmod +x "$fixture/diagnostic.sh"
         result=0
-        CLEANUP_SCRIPT="$work/cleanup.sh" FIXTURE="$fixture" FIXTURE_STATUS="$original" \
+        CLEANUP_SCRIPT="$work/cleanup.sh" FIXTURE="$fixture" FIXTURE_STATUS="$original" INSTALL_EVIDENCE_DIR="$fixture/evidence" \
             /bin/bash "$shell_mode" "$work/failed-cleanup-driver.sh" > "$fixture/result.log" 2>&1 || result=$?
         expected=$original
         [[ $original != 0 ]] || expected=1
         [[ $result == "$expected" && -d $fixture/scratch ]] || { cat "$fixture/result.log" >&2; exit 1; }
+        files=("$fixture/evidence"/*)
+        [[ ${#files[@]} == 1 ]]
+        if [[ $original == 0 ]]; then [[ ${files[0]} == "$fixture/evidence/startup-$(uname -m).png" ]];
+        else [[ ${files[0]} == "$fixture/evidence/startup-failure-$(uname -m).txt" ]]; fi
         cases=$((cases + 1))
     done
 done
