@@ -149,6 +149,8 @@ my $result = $interrupted || ($ok ? 0 : 1);
 if ($result) {
     $SIG{ALRM} = sub { POSIX::_exit($interrupted || $result) };
     alarm 2;
+    # Revoke before private cleanup can stall and exhaust its failure budget.
+    $revoke->() or $result ||= 1;
 } else {
     $SIG{ALRM} = sub {
         $interrupted ||= 124;

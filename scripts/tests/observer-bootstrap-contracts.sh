@@ -58,6 +58,21 @@ instrument() {
     ' "$helper" > "$fixture/instrumented.sh"
 }
 
+# Combine an actual post-publication failure with stalled private cleanup.
+# Only disposable copies change; both original production alarms remain intact.
+instrument_stalled_cleanup() {
+    FAILURE="$1" /usr/bin/perl -0777 -e '
+        my $source = <>;
+        my $failure = $ENV{FAILURE};
+        my $code = $failure eq "failure" ? q{die "synthetic post-publication failure\n";} :
+            "kill " . chr(39) . $failure . chr(39) . q{, $$;};
+        my $published = ($source =~ s/^(\s*# OUTPUT_PUBLISHED:.*)$/$1\n$code/m);
+        my $cleanup = ($source =~ s/^(# CLEANUP_BEGIN:.*)$/$1\nsleep 30;/m);
+        die "missing or duplicate boundary\n" unless $published == 1 && $cleanup == 1;
+        print $source;
+    ' "$helper" > "$fixture/instrumented.sh"
+}
+
 for shell_mode in -e +e; do
     # Fake credentials, environments, machine paths, quoted text and binary bytes
     # must never be copied into any JSON field or diagnostic console.
@@ -195,6 +210,19 @@ for shell_mode in -e +e; do
     run_helper "$fixture/instrumented.sh"
     [[ $result == 1 && ! -e $fixture/evidence/bootstrap.json ]] || fail 'cleanup failure published success JSON'
 
+    for failure in HUP INT TERM failure; do
+        new_case
+        instrument_stalled_cleanup "$failure"
+        start=$SECONDS
+        run_helper "$fixture/instrumented.sh"
+        case $failure in HUP) expected=129;; INT) expected=130;; TERM) expected=143;; failure) expected=1;; esac
+        [[ $result == "$expected" && $((SECONDS - start)) -le 4 ]] || fail 'combined failure lost exit/deadline'
+        # Forced exit may leave unuploaded private pending scratch. The owned
+        # final JSON must already be revoked before that cleanup can stall.
+        [[ ! -e $fixture/evidence/bootstrap.json && ! -L $fixture/evidence/bootstrap.json && ! -s $fixture/console ]] ||
+            fail 'post-publication failure retained uploadable JSON during stalled cleanup'
+    done
+
     # Actual production alarm, with a synthetic stalled parse and no child.
     new_case
     instrument FINGERPRINT_PARSE 'sleep 30;'
@@ -235,7 +263,7 @@ exit "$ORIGINAL"
 DRIVER
 for shell_mode in -e +e; do
     for original in 0 42; do
-        for scenario in available missing-reader output-failure HUP INT TERM; do
+        for scenario in available missing-reader output-failure HUP INT TERM TERM-stalled-cleanup; do
             new_case
             mkdir -p "$fixture/scratch/control" "$fixture/adapter" "$fixture/consumer"
             printf 'Missing private observer protocol paths\n' > "$fixture/scratch/control/xcode-private.log"
@@ -247,6 +275,9 @@ for shell_mode in -e +e; do
                 output-failure) mkdir "$fixture/evidence/bootstrap.json" ;;
                 HUP|INT|TERM)
                     instrument FINGERPRINT_PARSE "kill '$scenario', getppid(); kill '$scenario', \$\$;"
+                    cp "$fixture/instrumented.sh" "$fixture/adapter/capture-observer-bootstrap.sh" ;;
+                TERM-stalled-cleanup)
+                    instrument_stalled_cleanup TERM
                     cp "$fixture/instrumented.sh" "$fixture/adapter/capture-observer-bootstrap.sh" ;;
             esac
             cat > "$fixture/failure.sh" <<'STUB'
