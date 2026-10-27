@@ -99,7 +99,15 @@ expect() { [[ $result == "$1" ]] || fail "expected exit $1, got $result"; }
 count() { awk -v op="$1" '$0 == op {n++} END {print n+0}' "$calls"; }
 assert_json() { jq -e "$1" "$receipt" >/dev/null || fail "receipt assertion: $1"; }
 passed() {
-    if [[ -d $evidence ]] && rg -q 'FAKE_PRIVATE_STDERR_MARKER|fixture-profile' "$evidence"; then fail 'private evidence leak'; fi
+    if [[ -d $evidence ]]; then
+        leak_status=0
+        grep -R -q -E 'FAKE_PRIVATE_STDERR_MARKER|fixture-profile' "$evidence" || leak_status=$?
+        case $leak_status in
+            0) fail 'private evidence leak' ;;
+            1) ;;
+            *) fail 'could not scan retained evidence for private data' ;;
+        esac
+    fi
     cases=$((cases+1)); printf 'PASS %s\n' "$case_name"
 }
 prepare() { invoke prepare accepted; expect 0; [[ ! -s $calls ]] || fail 'prepare used network'; invoke claim accepted; expect 0; }

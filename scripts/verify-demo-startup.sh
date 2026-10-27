@@ -4,11 +4,22 @@ set -euo pipefail
 umask 077
 [[ $# == 1 && -d $1 && ! -L $1 ]] || exit 2
 app=$(cd "$1" && pwd -P)
+diagnostic_script="$(cd "$(dirname "$0")" && pwd)/capture-startup-failure.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-startup.XXXXXX")
 launcher=''
+diagnostic_launcher=''
 cleanup() {
     result=$?
     trap - EXIT
+    # Finish owned teardown if another handled signal arrives during diagnostics.
+    # Preserve an existing failure; cancellation must still turn success into failure.
+    trap 'if [[ $result == 0 ]]; then result=129; fi' HUP
+    trap 'if [[ $result == 0 ]]; then result=130; fi' INT
+    trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
+    if [[ $result != 0 && -n ${diagnostic_launcher:-$launcher} && -n ${INSTALL_EVIDENCE_DIR:-} ]]; then
+        "$diagnostic_script" "$app" "$work" "${diagnostic_launcher:-$launcher}" || \
+            printf 'Could not retain startup failure diagnostics; original failure is preserved.\n' >&2
+    fi
     # Quarantined apps may execute from AppTranslocation. Require our unique
     # snapshot argument as well as the expected executable before terminating.
     while read -r pid executable; do
@@ -25,11 +36,13 @@ cleanup() {
     exit "$result"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 spctl --assess --type execute --verbose=4 "$app"
 open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
 launcher=$!
+diagnostic_launcher=$launcher
 finished=false
 for ((attempt=0; attempt<30; attempt++)); do
     if ! kill -0 "$launcher" 2>/dev/null; then finished=true; break; fi
