@@ -19,6 +19,7 @@ control=$(plutil -extract LaunchUIObserverTests.EnvironmentVariables.CADENCE_OBS
 evidence=$(plutil -extract LaunchUIObserverTests.EnvironmentVariables.CADENCE_OBSERVER_EVIDENCE raw -o - "$3")
 case $FIXTURE_CASE in
     session-fail) exit 71 ;;
+    protocol-missing) printf 'Missing private observer protocol paths: FAKE_SECRET=private\n'; exit 65 ;;
     never-ready) while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 72 ;;
     wrong-ready) printf 'wrong-token' > "$control/ready"; while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 73 ;;
 esac
@@ -82,6 +83,7 @@ if [[ $FIXTURE_CASE == local ]]; then GITHUB_ACTIONS=false; fi
 if [[ $FIXTURE_CASE == missing-binding ]]; then unset LAUNCH_UI_EXPECTED_SHA256; fi
 launch_ui_prepare "$FIXTURE/Cadence.app" "$FIXTURE/scratch"
 if [[ $observer_ready == true ]]; then launch_ui_attach 900; fi
+if [[ $FIXTURE_CASE == diagnostic-output-fail ]]; then mkdir "$FIXTURE/evidence/bootstrap.json"; fi
 finish_result=0
 launch_ui_finish 42 || finish_result=$?
 if [[ $FIXTURE_CASE == kill-errors || $FIXTURE_CASE == ps-unavailable ]]; then
@@ -90,22 +92,38 @@ else [[ $finish_result == 0 ]]; fi
 if [[ $FIXTURE_CASE == disabled ]]; then [[ ! -d $FIXTURE/evidence ]]; exit; fi
 jq -e '.original_startup_exit == "42" and .runtime_acceptance == false and .read_only == true' "$FIXTURE/evidence/status.json" >/dev/null
 case $FIXTURE_CASE in
-    success)
+    success|diagnostic-output-fail|diagnostic-missing-reader)
         jq -e '.status == "OBSERVED"' "$FIXTURE/evidence/status.json" >/dev/null
         jq -e '.bundleID == "dev.cadence.app" and .build == "15" and .observationID != ""' "$FIXTURE/evidence/binding.json" >/dev/null
         jq -e '.launcherPID == 900' "$observer_control/launch.json" >/dev/null ;;
     *) jq -e '.status == "HOLD"' "$FIXTURE/evidence/status.json" >/dev/null ;;
 esac
 case $FIXTURE_CASE in
-    success|session-fail|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable)
+    success|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable)
         grep -q '^session$' "$FIXTURE/calls"
         # Only private fixture/runner executable paths can be signaled.
         ! grep -Eq '1103|1104' "$FIXTURE/signals" ;;
     *) ! grep -q '^session$' "$FIXTURE/calls" ;;
 esac
+# Verified teardown retains the actual reaped test exit and cannot qualify the
+# product. Missing/failing diagnostics never change original result or status.
+case $FIXTURE_CASE in
+    success|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session)
+        jq -e --argjson code "$observer_test_result" '.client_exit == $code and .status == "HOLD" and .cause == "UNKNOWN" and
+            .runtime_acceptance == false and .authority_established == false and .causality_established == false' \
+            "$FIXTURE/evidence/bootstrap.json" >/dev/null ;;
+    diagnostic-output-fail|diagnostic-missing-reader)
+        grep -q -F 'Bootstrap diagnostic unavailable; original launch and observer results preserved.' "$FIXTURE/result.log" ;;
+    *) [[ ! -e $FIXTURE/evidence/bootstrap.json ]] ;;
+esac
+if [[ $FIXTURE_CASE == protocol-missing ]]; then
+    [[ $observer_test_result == 65 ]]
+    jq -e '.signature_flags.missing_private_protocol_variables == true' "$FIXTURE/evidence/bootstrap.json" >/dev/null
+    ! grep -Eq 'FAKE_SECRET|private$' "$FIXTURE/evidence/bootstrap.json"
+fi
 DRIVER
 cases=0
-for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable success; do
+for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader success; do
     fixture="$work/$scenario"
     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/build/Build/Products"
     : > "$fixture/calls"
@@ -116,7 +134,13 @@ for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-
 <plist version="1.0"><dict><key>LaunchUIObserverTests</key><dict><key>EnvironmentVariables</key><dict/></dict></dict></plist>
 PLAN
     if [[ $scenario == missing-build ]]; then rm "$fixture/build/Build/Products/LaunchUIObserver_fixture.xctestrun"; fi
-    PATH="$work/bin:$PATH" OBSERVER_SCRIPT="$root/scripts/launch-ui-observer.sh" \
+    observer_script="$root/scripts/launch-ui-observer.sh"
+    if [[ $scenario == diagnostic-missing-reader ]]; then
+        mkdir "$fixture/isolated"
+        cp "$observer_script" "$fixture/isolated/launch-ui-observer.sh"
+        observer_script="$fixture/isolated/launch-ui-observer.sh"
+    fi
+    PATH="$work/bin:$PATH" OBSERVER_SCRIPT="$observer_script" \
         FIXTURE="$fixture" FIXTURE_CASE="$scenario" GITHUB_ACTIONS=true CI=true \
         LAUNCH_UI_BUILD_DIR="$fixture/build" LAUNCH_UI_EVIDENCE_DIR="$fixture/evidence" \
         EXPECTED_TEAM_ID=U9GXK89565 LAUNCH_UI_EXPECTED_SHA256=7b08ca7003a48662e0087bea3c2777680286d6bc1c4f295523ed9d7ae21315a9 \

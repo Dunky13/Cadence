@@ -85,6 +85,7 @@ launch_ui_prepare() {
     observer_evidence_owned=false
     observer_control=''
     observer_launcher=''
+    observer_plan=''
     observer_test_result=unavailable
     observer_cleanup_failed=false
     [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]] || return 0
@@ -164,10 +165,19 @@ launch_ui_attach() {
 }
 
 launch_ui_finish() {
-    local cleanup_result=0
+    local cleanup_result=0 bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
     launch_ui_stop || cleanup_result=1
     [[ ${observer_cleanup_failed:-false} != true ]] || cleanup_result=1
     [[ ${observer_evidence_owned:-false} == true && -n ${LAUNCH_UI_EVIDENCE_DIR:-} && -d $LAUNCH_UI_EVIDENCE_DIR ]] || return "$cleanup_result"
+    # Only after verified stop, while private control/plan still exist. This
+    # separate fingerprint cannot change readiness, teardown or product results.
+    if [[ $cleanup_result == 0 && -n ${observer_control:-} &&
+        ${observer_test_result:-unavailable} =~ ^(0|[1-9][0-9]{0,2})$ ]]; then
+        "$bootstrap_script" "$observer_control/xcode-private.log" "${observer_plan:-}" "$observer_test_result" ||
+            printf 'Bootstrap diagnostic unavailable; original launch and observer results preserved.\n' >&2
+    else
+        printf 'Bootstrap diagnostic unavailable: no verified reaped client; original results preserved.\n' >&2
+    fi
     if [[ $cleanup_result == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
