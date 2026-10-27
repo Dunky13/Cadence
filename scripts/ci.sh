@@ -13,6 +13,14 @@ actionlint .github/workflows/*.yml
 ./scripts/tests/apple-ticket-contracts.sh
 ./scripts/tests/startup-cleanup-contracts.sh
 ./scripts/tests/startup-failure-contracts.sh
+./scripts/tests/launch-ui-observer-contracts.sh
+./scripts/tests/observer-tree-contracts.sh
+./scripts/tests/observer-capture-contracts.sh
+# Compile the independent QA fixture/test runner, never execute its UI session.
+observer_build=$(mktemp -d "${TMPDIR:-/tmp}/cadence-observer-ci.XXXXXX")
+rmdir "$observer_build"
+trap 'rm -rf "$observer_build"' EXIT
+./scripts/build-launch-ui-observer.sh "$observer_build"
 ./scripts/tests/dmg-contracts.sh
 ./scripts/tests/signing-credentials-contracts.sh
 ./scripts/tests/phase-workflow-contracts.sh
