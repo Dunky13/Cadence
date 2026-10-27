@@ -55,24 +55,38 @@ automationmodetool() {
 }
 sleep() { /bin/sleep 0.04; }
 ps() {
-    if [[ $* == '-axo pid=,comm=' ]]; then
-        printf '1101 %s/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n' "$LAUNCH_UI_BUILD_DIR"
-        printf '1102 %s/Build/Products/Debug/LaunchUIFixture.app/Contents/MacOS/LaunchUIFixture\n' "$LAUNCH_UI_BUILD_DIR"
-        printf '1103 /unrelated/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n'
-        printf '1104 %s-extra/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n' "$LAUNCH_UI_BUILD_DIR"
-    else /bin/ps "$@"; fi
+    [[ $FIXTURE_CASE != ps-unavailable ]] || return 1
+    case "$*" in
+        '-axo pid=,comm=')
+            [[ -e $FIXTURE/dead-1101 ]] || printf '1101 %s/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n' "$LAUNCH_UI_BUILD_DIR"
+            [[ -e $FIXTURE/dead-1102 ]] || printf '1102 %s/Build/Products/Debug/LaunchUIFixture.app/Contents/MacOS/LaunchUIFixture\n' "$LAUNCH_UI_BUILD_DIR"
+            printf '1103 /unrelated/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n'
+            printf '1104 %s-extra/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n' "$LAUNCH_UI_BUILD_DIR" ;;
+        '-p 1101 -o comm=') [[ ! -e $FIXTURE/dead-1101 ]] || return 1; printf '%s/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner\n' "$LAUNCH_UI_BUILD_DIR" ;;
+        '-p 1102 -o comm=') [[ ! -e $FIXTURE/dead-1102 ]] || return 1; printf '%s/Build/Products/Debug/LaunchUIFixture.app/Contents/MacOS/LaunchUIFixture\n' "$LAUNCH_UI_BUILD_DIR" ;;
+        *) /bin/ps "$@" ;;
+    esac
 }
 kill() {
     if [[ $* == '-s '* && ${3:-} == 110* ]]; then
         printf '%s\n' "$*" >> "$FIXTURE/signals"
+        [[ $FIXTURE_CASE != kill-errors ]] || return 1
+        : > "$FIXTURE/dead-$3"
+    elif [[ $* == '-0 1101' || $* == '-0 1102' ]]; then
+        [[ ! -e $FIXTURE/dead-$2 ]]
     else builtin kill "$@"; fi
 }
+
 if [[ $FIXTURE_CASE == disabled ]]; then unset LAUNCH_UI_EVIDENCE_DIR; fi
 if [[ $FIXTURE_CASE == local ]]; then GITHUB_ACTIONS=false; fi
 if [[ $FIXTURE_CASE == missing-binding ]]; then unset LAUNCH_UI_EXPECTED_SHA256; fi
 launch_ui_prepare "$FIXTURE/Cadence.app" "$FIXTURE/scratch"
 if [[ $observer_ready == true ]]; then launch_ui_attach 900; fi
-launch_ui_finish 42
+finish_result=0
+launch_ui_finish 42 || finish_result=$?
+if [[ $FIXTURE_CASE == kill-errors || $FIXTURE_CASE == ps-unavailable ]]; then
+    [[ $finish_result == 1 && $observer_cleanup_failed == true && -n $observer_launcher ]]
+else [[ $finish_result == 0 ]]; fi
 if [[ $FIXTURE_CASE == disabled ]]; then [[ ! -d $FIXTURE/evidence ]]; exit; fi
 jq -e '.original_startup_exit == "42" and .runtime_acceptance == false and .read_only == true' "$FIXTURE/evidence/status.json" >/dev/null
 case $FIXTURE_CASE in
@@ -83,7 +97,7 @@ case $FIXTURE_CASE in
     *) jq -e '.status == "HOLD"' "$FIXTURE/evidence/status.json" >/dev/null ;;
 esac
 case $FIXTURE_CASE in
-    success|session-fail|never-ready|wrong-ready|permission-request|hung-session)
+    success|session-fail|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable)
         grep -q '^session$' "$FIXTURE/calls"
         # Only private fixture/runner executable paths can be signaled.
         ! grep -Eq '1103|1104' "$FIXTURE/signals" ;;
@@ -91,7 +105,7 @@ case $FIXTURE_CASE in
 esac
 DRIVER
 cases=0
-for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail never-ready wrong-ready permission-request hung-session success; do
+for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable success; do
     fixture="$work/$scenario"
     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/build/Build/Products"
     : > "$fixture/calls"
@@ -126,12 +140,19 @@ app="$FIXTURE/Cadence.app"
 work="$FIXTURE/scratch"
 launcher=''
 observer_control="$work/control"
-observer_launcher=$$
+observer_launcher=900
 observer_plan="$FIXTURE/build/Build/Products/observer-session.xctestrun"
 observer_test_result=unavailable
 LAUNCH_UI_BUILD_DIR="$FIXTURE/build"
-kill() { return 0; }
-ps() { return 0; }
+kill() {
+    if [[ $* == '-0 900' ]]; then [[ ! -e $FIXTURE/client-gone ]];
+    elif [[ $* == '-s TERM 900' || $* == '-s KILL 900' ]]; then : > "$FIXTURE/client-gone";
+    else return 0; fi
+}
+ps() {
+    if [[ $* == '-p 900 -o command=' ]]; then printf 'xcodebuild test-without-building -xctestrun %s -destination platform=macOS\n' "$observer_plan"; fi
+}
+wait() { return 0; }
 sleep() {
     if [[ -n $FIXTURE_SIGNAL ]]; then
         builtin kill -s "$FIXTURE_SIGNAL" "$$"
@@ -157,6 +178,31 @@ for shell_mode in -e +e; do
             [[ $result == "$expected" && ! -d $fixture/scratch ]] || { cat "$fixture/result.log" >&2; exit 1; }
             cases=$((cases + 1))
         done
+    done
+done
+cat > "$work/failed-cleanup-driver.sh" <<'DRIVER'
+#!/bin/bash
+set -uo pipefail
+source "$CLEANUP_SCRIPT"
+app="$FIXTURE/Cadence.app"
+work="$FIXTURE/scratch"
+launcher=''
+launch_ui_finish() { observer_cleanup_failed=true; return 1; }
+ps() { return 0; }
+trap cleanup EXIT
+exit "$FIXTURE_STATUS"
+DRIVER
+for shell_mode in -e +e; do
+    for original in 0 42; do
+        fixture="$work/failed-teardown-$shell_mode-$original"
+        mkdir -p "$fixture/scratch"
+        result=0
+        CLEANUP_SCRIPT="$work/cleanup.sh" FIXTURE="$fixture" FIXTURE_STATUS="$original" \
+            /bin/bash "$shell_mode" "$work/failed-cleanup-driver.sh" > "$fixture/result.log" 2>&1 || result=$?
+        expected=$original
+        [[ $original != 0 ]] || expected=1
+        [[ $result == "$expected" && -d $fixture/scratch ]] || { cat "$fixture/result.log" >&2; exit 1; }
+        cases=$((cases + 1))
     done
 done
 # Exercise the complete original launcher with synthetic LaunchServices only.

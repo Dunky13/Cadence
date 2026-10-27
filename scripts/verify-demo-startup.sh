@@ -20,7 +20,10 @@ cleanup() {
     trap 'if [[ $result == 0 ]]; then result=130; fi' INT
     trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
     if declare -F launch_ui_finish >/dev/null; then
-        launch_ui_finish "$result" || printf 'UI observer teardown/evidence unavailable; original result preserved.\n' >&2
+        if ! launch_ui_finish "$result"; then
+            printf 'UI observer owned teardown failed; qualification is held.\n' >&2
+            if [[ $result == 0 ]]; then result=1; fi
+        fi
     fi
     if [[ $result != 0 && -n ${diagnostic_launcher:-$launcher} && -n ${INSTALL_EVIDENCE_DIR:-} ]]; then
         "$diagnostic_script" "$app" "$work" "${diagnostic_launcher:-$launcher}" || \
@@ -38,7 +41,11 @@ cleanup() {
         fi
     done < <(ps -axo pid=,comm=)
     if [[ -n $launcher ]]; then kill "$launcher" 2>/dev/null || true; wait "$launcher" 2>/dev/null || true; fi
-    rm -rf "$work" || result=1
+    if [[ ${observer_cleanup_failed:-false} == true ]]; then
+        printf 'Preserved private observer control for unverified teardown: %s\n' "$work" >&2
+    else
+        rm -rf "$work" || result=1
+    fi
     exit "$result"
 }
 trap cleanup EXIT
@@ -47,6 +54,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 spctl --assess --type execute --verbose=4 "$app"
 launch_ui_prepare "$app" "$work" || printf 'UI observer preparation unavailable; ordinary launch proceeds.\n' >&2
+[[ ${observer_cleanup_failed:-false} != true ]] || exit 1
 open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
 launcher=$!
 diagnostic_launcher=$launcher

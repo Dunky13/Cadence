@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Security
+import ScreenCaptureKit
 import XCTest
 
 // This target deliberately contains no UI actions, interruption handlers, app
@@ -20,13 +21,19 @@ final class ObserverTests: XCTestCase {
         let pid: Int32
         let bundleID, executable, applicationPath: String
     }
-    struct Node: Codable {
+    struct Node: Codable, Equatable {
         let type: UInt
         let label, title: String
         let children: [Node]
         let truncated: Bool
     }
-    struct Window: Codable { let owner: Owner; let tree: Node; let screenshot: String }
+    struct WindowIdentity { let id: UInt32; let pid: Int32; let frame: CGRect }
+    struct Window: Codable {
+        let owner: Owner
+        let tree: Node
+        let screenshot: String
+        let windowID: UInt32?
+    }
     struct Observation: Codable {
         let binding: Binding
         let launcherPID: Int32
@@ -139,7 +146,8 @@ final class ObserverTests: XCTestCase {
         return Node(type: snapshot.elementType.rawValue,
                     label: show ? String(snapshot.label.prefix(2048)) : "",
                     title: show ? String(snapshot.title.prefix(2048)) : "", children: children,
-                    truncated: children.count < snapshot.children.count || children.contains(where: { $0.truncated }))
+                    truncated: (show && (snapshot.label.count > 2048 || snapshot.title.count > 2048))
+                        || children.count < snapshot.children.count || children.contains(where: { $0.truncated }))
     }
 
     private func permissionRequest(_ node: Node) -> Bool {
@@ -155,7 +163,42 @@ final class ObserverTests: XCTestCase {
         return editable.contains { $0.rawValue == node.type } || node.children.contains(where: editableContent)
     }
 
-    private func capture(_ binding: Binding, _ launch: Launch, index: Int) throws -> Bool {
+    private func captureWindowID(_ windows: [WindowIdentity], pid: Int32, frame: CGRect) -> UInt32? {
+        guard pid > 1, !frame.isEmpty, frame.width.isFinite, frame.height.isFinite,
+              frame.width <= 4096, frame.height <= 4096 else { return nil }
+        let matches = windows.filter { $0.id > 0 && $0.pid == pid && $0.frame == frame }
+        return matches.count == 1 ? matches[0].id : nil
+    }
+
+    private func isolatedWindowImage(_ owner: Owner, _ element: XCUIElement, _ tree: Node) async throws -> (UInt32, Data)? {
+        // Never request screen-recording permission. XCTest element screenshots
+        // crop the desktop and may include an overlapping editable window.
+        guard CGPreflightScreenCaptureAccess() else { return nil }
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        let frame = element.frame
+        let identities = content.windows.compactMap { window -> WindowIdentity? in
+            guard let pid = window.owningApplication?.processID else { return nil }
+            return WindowIdentity(id: window.windowID, pid: pid, frame: window.frame)
+        }
+        guard let id = captureWindowID(identities, pid: owner.pid, frame: frame),
+              let window = content.windows.first(where: { $0.windowID == id }),
+              frame.width <= 4096, frame.height <= 4096 else { return nil }
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let config = SCStreamConfiguration()
+        config.width = max(1, Int(frame.width.rounded(.up)))
+        config.height = max(1, Int(frame.height.rounded(.up)))
+        config.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        var budget = 1024
+        let after = safeTree(try element.snapshot(), budget: &budget)
+        guard after == tree, !after.truncated, !editableContent(after), !permissionRequest(after),
+              NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable,
+              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+        else { return nil }
+        return (id, png)
+    }
+
+    private func capture(_ binding: Binding, _ launch: Launch, index: Int) async throws -> Bool {
         guard validCandidate(URL(fileURLWithPath: binding.copiedPath), binding) else {
             throw NSError(domain: "CopiedCandidateIdentityMismatch", code: 1)
         }
@@ -176,16 +219,22 @@ final class ObserverTests: XCTestCase {
                     var budget = 1024
                     let tree = safeTree(try element.snapshot(), budget: &budget)
                     limited = limited || tree.truncated
+                    guard !tree.truncated else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
                     guard !permissionRequest(tree) else { throw NSError(domain: "UIAuthorityRequestHOLD", code: 1) }
-                    // Do not publish screenshots of windows with editable input.
-                    let name = (tree.truncated || editableContent(tree)) ? "" : "system-\(index)-\(owner.pid)-\(number).png"
-                    let image = name.isEmpty ? nil : element.screenshot().pngRepresentation
+                    // Bind an isolated window surface; never capture the desktop
+                    // rectangle behind an occluded element. Missing existing
+                    // authorization or an ambiguous/changing surface stays HOLD.
+                    var isolated: (UInt32, Data)?
+                    if !tree.truncated && !editableContent(tree) {
+                        isolated = try? await isolatedWindowImage(owner, element, tree)
+                    }
+                    let name = isolated == nil ? "" : "system-\(index)-\(owner.pid)-\(number).png"
                     guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else { continue }
-                    windows.append(Window(owner: owner, tree: tree, screenshot: name))
-                    if let image { images.append((name, image)) }
+                    windows.append(Window(owner: owner, tree: tree, screenshot: name, windowID: isolated?.0))
+                    if let isolated { images.append((name, isolated.1)) }
                 }
             } catch {
-                if (error as NSError).domain == "UIAuthorityRequestHOLD" { throw error }
+                if ["UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD"].contains((error as NSError).domain) { throw error }
                 unavailable.append(owner)
             }
         }
@@ -200,12 +249,12 @@ final class ObserverTests: XCTestCase {
         return !images.isEmpty
     }
 
-    func testObserveExistingLaunch() throws {
+    func testObserveExistingLaunch() async throws {
         do {
-            try observeExistingLaunch()
+            try await observeExistingLaunch()
         } catch {
             if let evidence {
-                let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "InvalidLauncher"]
+                let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD", "InvalidLauncher"]
                 let domain = (error as NSError).domain
                 let reason = known.contains(domain) ? domain : "native-query-or-protocol-failure"
                 try? text("HOLD: \(reason); no UI action or permission grant.\n", to: evidence.appendingPathComponent("session.txt"))
@@ -214,7 +263,7 @@ final class ObserverTests: XCTestCase {
         }
     }
 
-    private func observeExistingLaunch() throws {
+    private func observeExistingLaunch() async throws {
         continueAfterFailure = false
         executionTimeAllowance = 90
         let environment = ProcessInfo.processInfo.environment
@@ -240,7 +289,9 @@ final class ObserverTests: XCTestCase {
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
             for element in proxy.windows.allElementsBoundByIndex.prefix(8) {
                 var budget = 1024
-                guard !permissionRequest(safeTree(try element.snapshot(), budget: &budget)) else {
+                let tree = safeTree(try element.snapshot(), budget: &budget)
+                guard !tree.truncated else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
+                guard !permissionRequest(tree) else {
                     throw NSError(domain: "UIAuthorityRequestHOLD", code: 1)
                 }
             }
@@ -249,7 +300,7 @@ final class ObserverTests: XCTestCase {
         let deadline = Date().addingTimeInterval(65)
         while !files.fileExists(atPath: control.appendingPathComponent("launch.json").path) {
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) || Date() > deadline { return }
-            Thread.sleep(forTimeInterval: 0.1)
+            try await Task.sleep(for: .milliseconds(100))
         }
         let launch = try read(Launch.self, "launch.json")
         guard launch.launcherPID > 1 else { throw NSError(domain: "InvalidLauncher", code: 1) }
@@ -258,9 +309,9 @@ final class ObserverTests: XCTestCase {
         for (index, delay) in [0.0, 8.0, 22.0].enumerated() {
             while Date().timeIntervalSince(began) < delay {
                 if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
-                Thread.sleep(forTimeInterval: 0.1)
+                try await Task.sleep(for: .milliseconds(100))
             }
-            let captured = try capture(binding, launch, index: index)
+            let captured = try await capture(binding, launch, index: index)
             safeWindowObserved = safeWindowObserved || captured
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
         }

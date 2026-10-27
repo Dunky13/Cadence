@@ -9,44 +9,74 @@ launch_ui_status() {
         > "$LAUNCH_UI_EVIDENCE_DIR/status.json"
 }
 
+launch_ui_owned_helpers() {
+    local listing pid executable
+    listing=$(ps -axo pid=,comm=) || return 1
+    while read -r pid executable; do
+        if [[ $pid =~ ^[1-9][0-9]*$ &&
+            ( $executable == "$LAUNCH_UI_BUILD_DIR/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner" ||
+              $executable == "$LAUNCH_UI_BUILD_DIR/Build/Products/Debug/LaunchUIFixture.app/Contents/MacOS/LaunchUIFixture" ) ]]; then
+            printf '%s\n' "$pid"
+        fi
+    done <<< "$listing"
+}
+
 launch_ui_stop() {
+    local cleanup_result=0 helpers='' signal pid state='' arguments=''
     [[ -n ${observer_control:-} ]] || return 0
-    : > "$observer_control/stop"
-    [[ -n ${observer_launcher:-} ]] || return 0
-    # Give the test an opportunity to finish; its own allowance is also bounded.
+    : > "$observer_control/stop" || cleanup_result=1
+    [[ -n ${observer_launcher:-} ]] || return "$cleanup_result"
     for ((observer_wait=0; observer_wait<5; observer_wait++)); do
         if ! kill -0 "$observer_launcher" 2>/dev/null; then break; fi
-        sleep 1
+        sleep 1 || cleanup_result=1
     done
-    # Xcode can launch its runner through a service. Never kill that shared
-    # service: match only executables inside this unique private QA build.
-    for observer_signal in TERM KILL; do
-        while read -r observer_pid observer_executable; do
-            if [[ $observer_pid =~ ^[1-9][0-9]*$ &&
-                ( $observer_executable == "$LAUNCH_UI_BUILD_DIR/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner" ||
-                  $observer_executable == "$LAUNCH_UI_BUILD_DIR/Build/Products/Debug/LaunchUIFixture.app/Contents/MacOS/LaunchUIFixture" ) ]]; then
-                kill -s "$observer_signal" "$observer_pid" 2>/dev/null || true
-            fi
-        done < <(ps -axo pid=,comm=)
-        if [[ -n ${observer_launcher:-} ]]; then
-            observer_arguments=$(ps -p "$observer_launcher" -o command= 2>/dev/null) || observer_arguments=''
-            if [[ $observer_arguments == *"xcodebuild test-without-building -xctestrun $observer_plan "* ]]; then
-                kill -s "$observer_signal" "$observer_launcher" 2>/dev/null || true
-            fi
+    for signal in TERM KILL; do
+        if helpers=$(launch_ui_owned_helpers); then
+            while read -r pid; do
+                [[ -n $pid ]] || continue
+                # Revalidate ownership immediately before signaling.
+                arguments=$(ps -p "$pid" -o comm= 2>/dev/null) || arguments=''
+                case $arguments in
+                    "$LAUNCH_UI_BUILD_DIR/Build/Products/Debug/LaunchUIObserverTests-Runner.app/Contents/MacOS/LaunchUIObserverTests-Runner"|\
+                    "$LAUNCH_UI_BUILD_DIR/Build/Products/Debug/LaunchUIFixture.app/Contents/MacOS/LaunchUIFixture")
+                        if ! kill -s "$signal" "$pid" 2>/dev/null && kill -0 "$pid" 2>/dev/null; then cleanup_result=1; fi ;;
+                    '') if kill -0 "$pid" 2>/dev/null; then cleanup_result=1; fi ;;
+                    *) cleanup_result=1 ;; # Never signal a changed/reused process.
+                esac
+            done <<< "$helpers"
+        else cleanup_result=1; fi
+        if kill -0 "$observer_launcher" 2>/dev/null; then
+            arguments=$(ps -p "$observer_launcher" -o command= 2>/dev/null) || arguments=''
+            if [[ $arguments == *"xcodebuild test-without-building -xctestrun $observer_plan "* ]]; then
+                if ! kill -s "$signal" "$observer_launcher" 2>/dev/null && kill -0 "$observer_launcher" 2>/dev/null; then cleanup_result=1; fi
+            else cleanup_result=1; fi
         fi
-        if [[ $observer_signal == TERM ]]; then sleep 1; fi
+        if [[ $signal == TERM ]]; then sleep 1 || cleanup_result=1; fi
     done
-    if [[ -n ${observer_launcher:-} ]]; then
-        # KILL above makes this finite even if a test-control query hung.
-        # A mismatched/reused PID is never waited or signaled.
-        if ! kill -0 "$observer_launcher" 2>/dev/null; then
-            observer_test_result=0
-            wait "$observer_launcher" 2>/dev/null || observer_test_result=$?
-        else
-            observer_test_result=unavailable
-        fi
+    # Verify helper absence; a failed discovery is not an empty process list.
+    for ((observer_wait=0; observer_wait<5; observer_wait++)); do
+        if ! helpers=$(launch_ui_owned_helpers); then cleanup_result=1; break; fi
+        [[ -n $helpers ]] || break
+        sleep 0.1 || cleanup_result=1
+    done
+    [[ -z $helpers ]] || cleanup_result=1
+    if kill -0 "$observer_launcher" 2>/dev/null; then
+        state=$(ps -p "$observer_launcher" -o stat= 2>/dev/null) || state=''
     fi
-    observer_launcher=''
+    if ! kill -0 "$observer_launcher" 2>/dev/null || [[ $state == Z* ]]; then
+        observer_test_result=0
+        wait "$observer_launcher" 2>/dev/null || observer_test_result=$?
+    else
+        observer_test_result=unavailable
+        cleanup_result=1
+    fi
+    if [[ $cleanup_result == 0 ]]; then
+        observer_launcher=''
+        observer_cleanup_failed=false
+    else
+        observer_cleanup_failed=true
+    fi
+    return "$cleanup_result"
 }
 
 launch_ui_prepare() {
@@ -56,6 +86,7 @@ launch_ui_prepare() {
     observer_control=''
     observer_launcher=''
     observer_test_result=unavailable
+    observer_cleanup_failed=false
     [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]] || return 0
     [[ ! -e $LAUNCH_UI_EVIDENCE_DIR ]] || return 1
     mkdir -m 700 "$LAUNCH_UI_EVIDENCE_DIR" || return 1
@@ -133,9 +164,11 @@ launch_ui_attach() {
 }
 
 launch_ui_finish() {
-    launch_ui_stop || true
-    [[ ${observer_evidence_owned:-false} == true && -n ${LAUNCH_UI_EVIDENCE_DIR:-} && -d $LAUNCH_UI_EVIDENCE_DIR ]] || return 0
-    if [[ ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
+    local cleanup_result=0
+    launch_ui_stop || cleanup_result=1
+    [[ ${observer_cleanup_failed:-false} != true ]] || cleanup_result=1
+    [[ ${observer_evidence_owned:-false} == true && -n ${LAUNCH_UI_EVIDENCE_DIR:-} && -d $LAUNCH_UI_EVIDENCE_DIR ]] || return "$cleanup_result"
+    if [[ $cleanup_result == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
         launch_ui_status OBSERVED 'Read-only telemetry only; system UI causality unclassified.' "$1"
@@ -144,6 +177,7 @@ launch_ui_finish() {
         if [[ -f $LAUNCH_UI_EVIDENCE_DIR/status.json ]]; then
             cp "$LAUNCH_UI_EVIDENCE_DIR/status.json" "$LAUNCH_UI_EVIDENCE_DIR/preflight.json" || return 1
         fi
-        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}." "$1"
+        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result." "$1"
     fi
+    return "$cleanup_result"
 }
