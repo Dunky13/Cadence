@@ -11,6 +11,11 @@ diagnostic_launcher=''
 cleanup() {
     result=$?
     trap - EXIT
+    # Finish owned teardown if another handled signal arrives during diagnostics.
+    # Preserve an existing failure; cancellation must still turn success into failure.
+    trap 'if [[ $result == 0 ]]; then result=129; fi' HUP
+    trap 'if [[ $result == 0 ]]; then result=130; fi' INT
+    trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
     if [[ $result != 0 && -n ${diagnostic_launcher:-$launcher} && -n ${INSTALL_EVIDENCE_DIR:-} ]]; then
         "$diagnostic_script" "$app" "$work" "${diagnostic_launcher:-$launcher}" || \
             printf 'Could not retain startup failure diagnostics; original failure is preserved.\n' >&2
@@ -31,6 +36,7 @@ cleanup() {
     exit "$result"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 spctl --assess --type execute --verbose=4 "$app"

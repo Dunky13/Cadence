@@ -48,7 +48,9 @@ diagnostics="$work/startup-failure.txt"
         fi
     done < <(ps -axo pid=,comm=)
     printf '\nCadence Gatekeeper policy events from the last two minutes:\n'
-    log show --style compact --last 2m --info --predicate \
+    # Bound the policy reader itself; an expired alarm terminates that same PID.
+    perl -e 'alarm 20; exec @ARGV; die "Could not execute policy reader: $!\n";' -- \
+        log show --style compact --last 2m --info --predicate \
         'process == "syspolicyd" AND eventMessage CONTAINS "dev.cadence.app"' 2>&1 || \
         printf 'Policy log read failed with status %s; consent cause is unconfirmed.\n' "$?"
 } > "$diagnostics"

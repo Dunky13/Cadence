@@ -7,6 +7,8 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 awk '/^cleanup\(\) \{/ { copy=1 } copy { print } copy && /^\}/ { exit }' \
     "$root/scripts/verify-demo-startup.sh" > "$work/cleanup.sh"
+awk '/^trap / && /exit (129|130|143)/ { print }' \
+    "$root/scripts/verify-demo-startup.sh" > "$work/signal-traps.sh"
 cat > "$work/bin/provider" <<'STUB'
 #!/bin/bash
 set -euo pipefail
@@ -27,6 +29,9 @@ case $name in
         [[ $# == 8 && $1 == show && $2 == --style && $3 == compact && $4 == --last && $5 == 2m && $6 == --info && $7 == --predicate ]] || exit 99
         [[ $8 == 'process == "syspolicyd" AND eventMessage CONTAINS "dev.cadence.app"' ]] || exit 99
         [[ $FIXTURE_LOG_FAIL == 0 ]] || exit 77
+        if [[ -n ${FIXTURE_SIGNAL:-} ]]; then
+            kill -s "$FIXTURE_SIGNAL" "$FIXTURE_DRIVER_PID"
+        fi
         printf 'SYNTHETIC policy event; no Apple or consent proof\n' ;;
     ps)
         case "$*" in
@@ -62,6 +67,8 @@ if [[ $FIXTURE_STATUS == 42 ]]; then launcher=''; fi
 diagnostic_script=$FIXTURE_DIAGNOSTICS
 source "$FIXTURE_CLEANUP"
 trap cleanup EXIT
+source "$FIXTURE_TRAPS"
+export FIXTURE_DRIVER_PID=$$
 exit "$FIXTURE_STATUS"
 DRIVER
 cases=0
@@ -80,7 +87,7 @@ for shell_mode in -e +e; do
             PATH="$work/bin:$PATH" INSTALL_EVIDENCE_DIR="$fixture/evidence" \
                 FIXTURE="$fixture" FIXTURE_APP="$app" FIXTURE_SCRATCH="$scratch" FIXTURE_LOG_FAIL="$log_fail" \
                 FIXTURE_DIAGNOSTICS="$root/scripts/capture-startup-failure.sh" FIXTURE_CLEANUP="$work/cleanup.sh" \
-                FIXTURE_STATUS="$original_status" FIXTURE_SHELL_MODE="$shell_mode" \
+                FIXTURE_TRAPS="$work/signal-traps.sh" FIXTURE_STATUS="$original_status" FIXTURE_SHELL_MODE="$shell_mode" FIXTURE_SIGNAL='' \
                 /bin/bash "$shell_mode" "$work/driver.sh" > "$fixture/log" 2>&1 || result=$?
             [[ $result == "$original_status" && ! -e $scratch ]] || { cat "$fixture/log" >&2; exit 1; }
             printf '1101\n1102\n' > "$fixture/expected-signals"
@@ -90,21 +97,45 @@ for shell_mode in -e +e; do
             if [[ $original_status == 0 || $log_fail == 2 ]]; then
                 [[ ! -e $evidence ]] || exit 1
                 if [[ $original_status != 0 ]]; then
-                    rg -q -F 'Could not retain startup failure diagnostics' "$fixture/log" || exit 1
+                    grep -q -F 'Could not retain startup failure diagnostics' "$fixture/log" || exit 1
                 fi
             else
                 [[ -s $evidence ]] || { cat "$fixture/log" >&2; exit 1; }
                 for expected in 'does not establish runtime acceptance' SYNTHETIC-quarantine-preserved '1101 SYNTHETIC owned' '1102 SYNTHETIC owned' 'no grant attempted'; do
-                    rg -q -F "$expected" "$evidence" || { cat "$evidence" >&2; exit 1; }
+                    grep -q -F "$expected" "$evidence" || { cat "$evidence" >&2; exit 1; }
                 done
-                ! rg -q -F '1103 SYNTHETIC' "$evidence" || exit 1
-                if [[ $original_status == 42 ]]; then rg -q -F 'SYNTHETIC incomplete PNG' "$evidence";
-                else rg -q -F 'No snapshot was produced.' "$evidence"; fi
-                if [[ $log_fail == 0 ]]; then rg -q -F 'SYNTHETIC policy event' "$evidence";
-                else rg -q -F 'Policy log read failed with status 77' "$evidence"; fi
+                ! grep -q -F '1103 SYNTHETIC' "$evidence" || exit 1
+                if [[ $original_status == 42 ]]; then grep -q -F 'SYNTHETIC incomplete PNG' "$evidence";
+                else grep -q -F 'No snapshot was produced.' "$evidence"; fi
+                if [[ $log_fail == 0 ]]; then grep -q -F 'SYNTHETIC policy event' "$evidence";
+                else grep -q -F 'Policy log read failed with status 77' "$evidence"; fi
             fi
             cases=$((cases + 1))
         done
+    done
+done
+for shell_mode in -e +e; do
+    for signal_name in INT TERM HUP; do
+        fixture="$work/$shell_mode-during-diagnostics-$signal_name"
+        app="$fixture/installed apps/Cadence.app"
+        scratch="$fixture/owned snapshot"
+        mkdir -p "$app/Contents/MacOS" "$scratch"
+        : > "$fixture/calls"
+        : > "$fixture/signals"
+        result=0
+        PATH="$work/bin:$PATH" INSTALL_EVIDENCE_DIR="$fixture/evidence" \
+            FIXTURE="$fixture" FIXTURE_APP="$app" FIXTURE_SCRATCH="$scratch" FIXTURE_LOG_FAIL=0 \
+            FIXTURE_DIAGNOSTICS="$root/scripts/capture-startup-failure.sh" FIXTURE_CLEANUP="$work/cleanup.sh" \
+            FIXTURE_TRAPS="$work/signal-traps.sh" FIXTURE_STATUS=43 FIXTURE_SHELL_MODE="$shell_mode" FIXTURE_SIGNAL="$signal_name" \
+            /bin/bash "$shell_mode" "$work/driver.sh" > "$fixture/log" 2>&1 || result=$?
+        [[ $result == 43 && ! -e $scratch ]] || {
+            printf 'Signal %s replaced failure or skipped owned cleanup (exit %s).\n' "$signal_name" "$result" >&2
+            cat "$fixture/log" >&2; exit 1;
+        }
+        printf '1101\n1102\n900\n' > "$fixture/expected-signals"
+        cmp "$fixture/signals" "$fixture/expected-signals" || exit 1
+        [[ -s $fixture/evidence/startup-failure-arm64.txt ]] || exit 1
+        cases=$((cases + 1))
     done
 done
 printf 'Startup failure capture: %s cases passed; synthetic providers only.\n' "$cases"
