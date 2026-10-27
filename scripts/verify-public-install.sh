@@ -27,6 +27,25 @@ done < "$work/SHA256SUMS"
 [[ $(printf '%s' "$actual" | LC_ALL=C sort) == "$expected" ]] || fail 'Public checksum set differs.'
 [[ ${EXPECTED_TEAM_ID:-} =~ ^[A-Z0-9]{10}$ ]] || fail 'Missing configured signing authority.'
 jq -e --arg team "$EXPECTED_TEAM_ID" --arg commit "$SOURCE_COMMIT" --arg version "$version" '.team_id == $team and .source_commit == $commit and .version == $version and .bundle_id == "dev.cadence.app" and .architecture == "universal" and .notarization == "Accepted" and .tickets == "stapled and validated"' "$work/distribution.json" >/dev/null || fail 'Wrong public candidate provenance.'
+if [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]]; then
+    # The separately downloaded, checksummed public app is the observer's hash
+    # authority. No product build/sign/submission and no change to installation.
+    LAUNCH_UI_EXPECTED_SHA256=''
+    LAUNCH_UI_EXPECTED_VERSION=''
+    LAUNCH_UI_EXPECTED_BUILD=''
+    public_app="$work/public-app/Cadence.app"
+    if ditto -x -k "$work/$archive" "$work/public-app" &&
+        [[ -d $public_app && ! -L $public_app && -f $public_app/Contents/MacOS/Cadence &&
+        ! -L $public_app/Contents/MacOS/Cadence ]]; then
+        LAUNCH_UI_EXPECTED_SHA256=$(shasum -a 256 < "$public_app/Contents/MacOS/Cadence") || LAUNCH_UI_EXPECTED_SHA256=''
+        LAUNCH_UI_EXPECTED_SHA256=${LAUNCH_UI_EXPECTED_SHA256%% *}
+        LAUNCH_UI_EXPECTED_VERSION=$(jq -er '.version' "$work/distribution.json") || LAUNCH_UI_EXPECTED_VERSION=''
+        LAUNCH_UI_EXPECTED_BUILD=$(jq -er '.build_number' "$work/distribution.json") || LAUNCH_UI_EXPECTED_BUILD=''
+    else
+        printf 'Optional UI observer public-app binding unavailable; ordinary installation proceeds.\n' >&2
+    fi
+    export LAUNCH_UI_EXPECTED_SHA256 LAUNCH_UI_EXPECTED_VERSION LAUNCH_UI_EXPECTED_BUILD
+fi
 # curl does not set browser quarantine. Add it and preserve it through installation.
 quarantine="0083;$(printf '%x' "$(date +%s)");CadenceReleaseVerification;$(uuidgen)"
 xattr -w com.apple.quarantine "$quarantine" "$work/$image"

@@ -143,6 +143,7 @@ jobs:
           - runner: macos-15-intel
             arch: x86_64
     env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
       EXPECTED_TEAM_ID: ${{ needs.distribution.outputs.team_id }}
@@ -152,9 +153,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Compile independent ad-hoc QA observer (no product build or UI session)
+        continue-on-error: true
+        env:
+          LAUNCH_UI_BUILD_DIR: ${{ runner.temp }}/launch-ui-build
+        run: ./scripts/build-launch-ui-observer.sh "$LAUNCH_UI_BUILD_DIR"
       - name: Download public assets and verify installed demo startup
         env:
           INSTALL_EVIDENCE_DIR: ${{ runner.temp }}/consumer-evidence
+          LAUNCH_UI_BUILD_DIR: ${{ runner.temp }}/launch-ui-build
+          LAUNCH_UI_EVIDENCE_DIR: ${{ runner.temp }}/launch-ui-evidence
         run: ./scripts/verify-public-install.sh
       - name: Retain independent public-install evidence
         if: ${{ always() }}
@@ -162,6 +170,23 @@ jobs:
         with:
           name: Cadence-Consumer-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/consumer-evidence/*
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Retain separate allowlisted read-only system UI telemetry
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-LaunchUI-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/launch-ui-evidence/status.json
+            ${{ runner.temp }}/launch-ui-evidence/preflight.json
+            ${{ runner.temp }}/launch-ui-evidence/binding.json
+            ${{ runner.temp }}/launch-ui-evidence/session.txt
+            ${{ runner.temp }}/launch-ui-evidence/observation-0.json
+            ${{ runner.temp }}/launch-ui-evidence/observation-1.json
+            ${{ runner.temp }}/launch-ui-evidence/observation-2.json
+            ${{ runner.temp }}/launch-ui-evidence/system-*.png
           if-no-files-found: warn
           retention-days: 90
 
