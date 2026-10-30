@@ -6,7 +6,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/cadence-release-contracts.XXXXXX")
 work=$(cd "$work" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin" "$work/repo/scripts" "$work/repo/Resources" "$work/provider"
-for script in validate-apple-ticket.sh release-source-context.sh release-macos.sh notarize-artifact.sh apple-stage-state.sh verify-apple-distribution.sh verify-apple-dmg-binding.sh package-dmg.sh check-dmg.sh verify-demo-startup.sh launch-ui-observer.sh capture-startup-failure.sh capture-observer-bootstrap.sh collect-observer-evidence.sh; do
+for script in validate-apple-ticket.sh release-source-context.sh release-macos.sh notarize-artifact.sh apple-stage-state.sh verify-apple-distribution.sh verify-apple-dmg-binding.sh package-dmg.sh check-dmg.sh verify-demo-startup.sh launch-ui-observer.sh capture-startup-failure.sh capture-observer-bootstrap.sh collect-observer-evidence.sh observer-process-bridge.sh; do
     cp "$root/scripts/$script" "$work/repo/scripts/"
 done
 printf '{"CFBundleShortVersionString":"1.2.3","CFBundleVersion":"42"}\n' > "$work/repo/Resources/Info.plist"

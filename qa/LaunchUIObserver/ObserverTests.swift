@@ -13,6 +13,13 @@ final class ObserverTests: XCTestCase {
         let copiedPath, snapshotPath, observationID: String
     }
     struct Launch: Codable { let launcherPID: Int32 }
+    struct ProcessReply: Decodable {
+        let schema, observationID, requestID, kind: String
+        let pid: Int32
+        let ok: Bool
+        let output: String
+    }
+    enum ObserverCancellation: Error { case stopped }
     enum BootstrapStage: String, CaseIterable, Codable {
         case protocolPathsReceived, candidateCheckStarted, candidateVerified
         case screenSessionStarted, screenSessionReady
@@ -148,17 +155,42 @@ final class ObserverTests: XCTestCase {
     }
 
     private func ps(_ arguments: [String]) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = arguments
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
-        return String(decoding: data, as: UTF8.self)
+        guard !stopRequested else { throw ObserverCancellation.stopped }
+        guard let control, let observationID else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
+        let kind: String
+        let pid: Int32
+        if arguments == ["-axo", "pid=,comm="] {
+            kind = "processes"; pid = 0
+        } else if arguments.count == 4, arguments[0] == "-p", arguments[2] == "-o",
+                  let value = Int32(arguments[1]), value > 1,
+                  let query = ["command=": "command", "comm=": "executable", "stat=": "state"][arguments[3]] {
+            kind = query; pid = value
+        } else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
+        let requestID = UUID().uuidString
+        let marker = "CadenceObserverQuery:\(observationID):\(requestID):\(kind):\(pid)\n"
+        try FileHandle.standardOutput.write(contentsOf: Data(marker.utf8))
+        let replyURL = control.appendingPathComponent("reply-\(requestID).json")
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            guard !stopRequested else { throw ObserverCancellation.stopped }
+            if files.fileExists(atPath: replyURL.path) {
+                let attributes = try files.attributesOfItem(atPath: replyURL.path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular,
+                      let size = attributes[.size] as? NSNumber, size.intValue <= 1100000 else {
+                    throw NSError(domain: "ProcessQueryUnavailable", code: 1)
+                }
+                let reply = try JSONDecoder().decode(ProcessReply.self, from: Data(contentsOf: replyURL))
+                guard reply.schema == "cadence/process-query/v1", reply.observationID == observationID,
+                      reply.requestID == requestID, reply.kind == kind, reply.pid == pid, reply.ok,
+                      reply.output.utf8.count <= 1048576 else {
+                    throw NSError(domain: "ProcessQueryUnavailable", code: 1)
+                }
+                guard !stopRequested else { throw ObserverCancellation.stopped }
+                return reply.output
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw NSError(domain: "ProcessQueryUnavailable", code: 1)
     }
 
     private func ownedProcesses(_ binding: Binding) throws -> [OwnedProcess] {
@@ -477,9 +509,11 @@ final class ObserverTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(100))
             }
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
-            progress.include(try await capture(binding, launch, index: index))
-            if stopRequested { break }
-            try openNormalConfirmation(binding, launch)
+            do {
+                progress.include(try await capture(binding, launch, index: index))
+                if stopRequested { break }
+                try openNormalConfirmation(binding, launch)
+            } catch ObserverCancellation.stopped { break }
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
         }
         let status = progress.observed

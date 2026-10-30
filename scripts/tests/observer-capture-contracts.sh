@@ -10,33 +10,6 @@ import Foundation
 import CoreGraphics
 var scenario = "baseline"
 var ownerLookups: [Int32: Int] = [:]
-final class Process {
-    var executableURL: URL?
-    var arguments: [String] = []
-    var standardOutput: Pipe?
-    var standardError: FileHandle?
-    var terminationStatus: Int32 {
-        if scenario == "enumeration-failure" && arguments == ["-axo", "pid=,comm="] { return 1 }
-        if scenario == "argument-failure" && arguments.last == "command=" { return 1 }
-        if scenario == "state-failure" && arguments.last == "stat=" { return 1 }
-        return 0
-    }
-    func run() throws {
-        let executable = "/copied/Cadence.app/Contents/MacOS/Cadence"
-        var value = ""
-        if terminationStatus == 0 && scenario != "verified-absence" {
-            if arguments == ["-axo", "pid=,comm="] { value = "800 \(executable)\n" }
-            if arguments.last == "command=" && scenario != "empty-command" {
-                value = "\(executable) --demo --snapshot /unique/startup.png\n"
-            }
-            if arguments.last == "stat=" && scenario != "empty-state" { value = "T\n" }
-        }
-        guard let pipe = standardOutput else { preconditionFailure("Missing inert pipe") }
-        pipe.fileHandleForWriting.write(Data(value.utf8))
-        pipe.fileHandleForWriting.closeFile()
-    }
-    func waitUntilExit() {}
-}
 struct XCUIElementSnapshot {
     var elementType: XCUIElement.ElementType
     var label = "Safe synthetic text"
@@ -79,7 +52,7 @@ struct Harness {
 SWIFT
 awk '
     /^    struct (Binding|Launch|OwnedProcess|Owner|Node|Window|CaptureResult|ObservationProgress|Observation)[: ]/ ||
-    /^    private func (ps|ownedProcesses|safeTree|permissionRequest|editableContent|capture)\(/ {
+    /^    private func (ownedProcesses|safeTree|permissionRequest|editableContent|capture)\(/ {
         if ($0 ~ /} *$/) { print; next }
         copy=1
     }
@@ -87,6 +60,16 @@ awk '
     copy && /^    }$/ { copy=0 }
 ' "$root/qa/LaunchUIObserver/ObserverTests.swift" >> "$work/capture.swift"
 cat >> "$work/capture.swift" <<'SWIFT'
+    private func ps(_ arguments: [String]) throws -> String {
+        if (scenario == "enumeration-failure" && arguments == ["-axo", "pid=,comm="]) ||
+            (scenario == "argument-failure" && arguments.last == "command=") ||
+            (scenario == "state-failure" && arguments.last == "stat=") { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
+        if scenario == "verified-absence" { return "" }
+        let executable = "/copied/Cadence.app/Contents/MacOS/Cadence"
+        if arguments == ["-axo", "pid=,comm="] { return "800 \(executable)\n" }
+        if arguments.last == "command=" { return scenario == "empty-command" ? "" : "\(executable) --demo --snapshot /unique/startup.png\n" }
+        return scenario == "empty-state" ? "" : "T\n"
+    }
     private func validCandidate(_ app: URL, _ binding: Binding) -> Bool { true }
     private func systemOwners() throws -> [Owner] {
         if scenario == "system-query-failure" { throw NSError(domain: "SystemWindowQueryUnavailable", code: 1) }

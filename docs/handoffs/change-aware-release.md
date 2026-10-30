@@ -60,16 +60,54 @@ the public-install flow against immutable v0.2.0/build15 without signing secrets
 write permission or a signing environment; this qualifies installer automation,
 not newly built product bytes.
 
+## Proven observation failure and process-query repair
+
+At `434c4ce`, [CI 41083249075](https://github.com/Dunky13/Cadence/actions/runs/41083249075)
+reaches readiness on both architectures, then fails with NSPOSIXErrorDomain 1
+(Operation not permitted). Both encrypted archive digests and decoded bootstrap
+fingerprints match. Arm64 client: 13994 bytes, SHA-256
+`e6a62a115e7ffbfd7f30cb7d7c5117c826fce38c2953872cf09e029e784c0a81`.
+Intel client: 13523 bytes, SHA-256
+`db83808217e5f6cace4f723dc4364dc0d8014f2ac7b56c9e9514ab40a2638af4`.
+The first throwing operation in observation is spawning `/bin/ps`; a nonzero
+query exit would instead report the controller's ProcessQueryUnavailable error.
+The runner's sandbox therefore also prevents process-query subprocess launch.
+
+The parent harness now owns a finite read-only process-metadata broker. The
+sandboxed client sends only fixed query kinds through nonce/request-ID-bound
+stdout frames and reads private atomic typed replies. It never starts a helper.
+Enumeration includes all Cadence executables so competing copies still block
+Open. Per-process replies require the exact owned original/translocated app and
+snapshot arguments or the exact known ordinary launcher. Unrelated arguments
+are never returned. Queries, reply sizes, total requests and worker lifetime
+are bounded; stop cancels client waits. The parent stops and reaps its worker
+and any query child after XCTest teardown. Broker failures hold enabled consent
+qualification even when product startup has already produced a valid PNG.
+The sandbox and original thirty-second product timeout remain unchanged.
+
 ## Validation and review
 
 The full local scripts/ci.sh passes on arm64/macOS 27/Xcode 27.1, including 59
 Swift tests with real launchd integration, native app build, workflow/static
 checks, and all signing/recovery/publication contracts. Focused final checks
 pass: 24 inert Open-controller cases, 24 attachment/signal cases, 17 exporter
-cases, eight stage cases plus optional-output failures, 57 observer lifecycle
+cases, eight stage cases plus optional-output failures, 73 observer lifecycle
 cases, 21 inert capture cases and the existing privacy/provenance contracts.
 Final changed QA sources also pass build-for-testing with sandbox verification.
-These are local/source results, not hosted runtime acceptance.
+These are local/source results, not hosted runtime acceptance. The process
+broker adds 17 isolated parent IPC/ownership/timeout cases and 12 exact-production
+Swift reply/cancellation cases. Independent Standards and Spec reviews cover
+this increment against `434c4ce`. Standards reproduced a cancellation defect:
+requested stop during a valid in-flight query yielded broker exit 143. The
+regression and independent rerun verify that only requested TERM cancels and
+reaps cleanly; faults and other signals remain failures. Both re-reviews report
+no remaining source-supported findings for broker SHA-256
+`b1ce81d6451b4e7e7c94b085216fcce134bf5b1804862b9e77a875b13e41a640`.
+The full local `scripts/ci.sh` also passes for this increment, including the
+sandbox-preserving QA compile, 59 Swift tests with launchd integration, native
+build and all release contracts. Its initial broker matrix had 16 cases; the
+final 17-case targeted rerun includes the repaired cancellation and unexpected
+TERM paths. ShellCheck passes on the final scripts. No local UI was executed.
 
 Independent Standards and Spec reviews initially found controller failures could
 be ignored after successful product startup. The real finish/outer cleanup
@@ -78,20 +116,16 @@ reproduced that problem; the repair and both re-reviews passed at tree
 stop request could arrive during capture/final queries and still permit Open.
 Its inert regression fails against the reviewed method and passes after the
 stop guards. Both independent re-reviews report no further findings at tree
-06dae2fece2afe5a1e5734fab378372b91f5d47e. Subsequent changes are this handoff's
-updated evidence and structure.
+06dae2fece2afe5a1e5734fab378372b91f5d47e. The subsequent process-broker
+increment and its separate reviews are recorded above.
 
 ## Remaining gates and cleanup
 
-At repaired source `ab9cc32`, hosted Intel run 41081797998 proves readiness,
-stage `ready`, verified teardown and safe attachment collection. It then fails
-during observation with no Open attempted and no observation record. Arm64 was
-blocked earlier by Apple CloudKit connection losses exhausting the existing
-bounded ticket-validation retries. The sandbox output repair is verified on
-Intel; actual normal-Open matching and startup are still held. The previously
-approved encrypted capture is temporarily restored unchanged, with the same
-protected one-time key, to identify this later observation failure. Remove it
-again after that diagnosis and repair.
+The output-transport repair is verified by readiness on both architectures in
+run 41083249075. The later process-query denial still blocks Open and startup.
+The parent-owned process broker requires hosted verification. The previously
+approved encrypted capture remains active with the same protected one-time key
+until that repair is verified; remove it before final acceptance.
 
 Repaired-head hosted arm64 and Intel readiness, actual dialog matching, native
 startup and finalized result/attachment export remain required. Missing UI

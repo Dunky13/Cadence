@@ -22,11 +22,43 @@ launch_ui_owned_helpers() {
     done <<< "$listing"
 }
 
+launch_ui_stop_bridge() {
+    local bridge_state='' bridge_arguments='' bridge_status=0 bridge_wait signal
+    [[ -n ${observer_bridge_pid:-} ]] || return 0
+    for ((bridge_wait=0; bridge_wait<5; bridge_wait++)); do
+        if ! kill -0 "$observer_bridge_pid" 2>/dev/null; then break; fi
+        sleep 0.05
+    done
+    for signal in TERM KILL; do
+        if ! kill -0 "$observer_bridge_pid" 2>/dev/null; then break; fi
+        bridge_state=$(ps -p "$observer_bridge_pid" -o stat= 2>/dev/null) || bridge_state=''
+        [[ $bridge_state != Z* ]] || break
+        bridge_arguments=$(ps -p "$observer_bridge_pid" -o command= 2>/dev/null) || bridge_arguments=''
+        if [[ $bridge_arguments != "/usr/bin/perl - $observer_control $observer_product_launcher $observer_id $$" ]]; then
+            return 1
+        fi
+        if ! kill -s "$signal" "$observer_bridge_pid" 2>/dev/null && kill -0 "$observer_bridge_pid" 2>/dev/null; then return 1; fi
+        sleep 0.05
+    done
+    if kill -0 "$observer_bridge_pid" 2>/dev/null; then
+        bridge_state=$(ps -p "$observer_bridge_pid" -o stat= 2>/dev/null) || bridge_state=''
+        [[ $bridge_state == Z* ]] || return 1
+    fi
+    wait "$observer_bridge_pid" 2>/dev/null || bridge_status=$?
+    observer_bridge_result=$bridge_status
+    observer_bridge_pid=''
+    return 0
+}
+
 launch_ui_stop() {
     local cleanup_result=0 helpers='' signal pid state='' arguments=''
     [[ -n ${observer_control:-} ]] || return 0
     : > "$observer_control/stop" || cleanup_result=1
-    [[ -n ${observer_launcher:-} ]] || return "$cleanup_result"
+    if [[ -z ${observer_launcher:-} ]]; then
+        launch_ui_stop_bridge || cleanup_result=1
+        if [[ $cleanup_result != 0 ]]; then observer_cleanup_failed=true; fi
+        return "$cleanup_result"
+    fi
     for ((observer_wait=0; observer_wait<5; observer_wait++)); do
         if ! kill -0 "$observer_launcher" 2>/dev/null; then break; fi
         sleep 1 || cleanup_result=1
@@ -71,6 +103,7 @@ launch_ui_stop() {
         observer_test_result=unavailable
         cleanup_result=1
     fi
+    launch_ui_stop_bridge || cleanup_result=1
     if [[ $cleanup_result == 0 ]]; then
         observer_launcher=''
         observer_cleanup_failed=false
@@ -88,6 +121,9 @@ launch_ui_prepare() {
     observer_launcher=''
     observer_plan=''
     observer_id=''
+    observer_bridge_pid=''
+    observer_bridge_result=0
+    observer_product_launcher=''
     observer_test_result=unavailable
     observer_cleanup_failed=false
     [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]] || return 0
@@ -164,6 +200,10 @@ launch_ui_prepare() {
 
 launch_ui_attach() {
     [[ ${observer_ready:-false} == true ]] || return 0
+    observer_product_launcher=$1
+    "${BASH_SOURCE[0]%/*}/observer-process-bridge.sh" "$observer_control" "$1" "$observer_id" "$$" \
+        > "$observer_control/process-bridge-private.log" 2>&1 &
+    observer_bridge_pid=$!
     jq -n --argjson pid "$1" '{launcherPID:$pid}' > "$observer_control/launch-pending.json" || return 1
     mv "$observer_control/launch-pending.json" "$observer_control/launch.json"
 }
@@ -190,7 +230,7 @@ launch_ui_finish() {
     else
         printf 'Bootstrap diagnostic unavailable: no verified reaped client; original results preserved.\n' >&2
     fi
-    if [[ $cleanup_result == 0 && $collection_result == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
+    if [[ $cleanup_result == 0 && $collection_result == 0 && ${observer_bridge_result:-0} == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
         launch_ui_status OBSERVED 'Telemetry recorded; original startup result remains authoritative.' "$1"
@@ -199,12 +239,12 @@ launch_ui_finish() {
         if [[ -f $LAUNCH_UI_EVIDENCE_DIR/status.json ]]; then
             cp "$LAUNCH_UI_EVIDENCE_DIR/status.json" "$LAUNCH_UI_EVIDENCE_DIR/preflight.json" || return 1
         fi
-        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result." "$1"
+        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result; bridge exit ${observer_bridge_result:-0}." "$1"
     fi
     # Consent is an authoritative controller, unlike optional read-only images.
     # Rejection/failed XCTest cannot qualify a product that later renders a PNG.
     if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true &&
-        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 ) ]]; then
+        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 || ${observer_bridge_result:-0} != 0 ) ]]; then
         return 1
     fi
     return "$cleanup_result"
