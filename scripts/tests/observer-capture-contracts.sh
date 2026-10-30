@@ -103,6 +103,9 @@ cat >> "$work/capture.swift" <<'SWIFT'
     private func write<T: Encodable>(_ value: T, to url: URL) throws {
         try JSONEncoder().encode(value).write(to: url)
     }
+    private func retainEvidence(_ data: Data, name: String) throws {
+        try data.write(to: evidence.appendingPathComponent(name))
+    }
     func run() async throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "SYNTHETIC0", version: "0.2.0", build: "15", executableSHA256: "synthetic", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "synthetic-unique")
         let failures = ["enumeration-failure", "argument-failure", "state-failure", "empty-command", "empty-state", "system-query-failure", "truncated", "authority"]

@@ -10,6 +10,7 @@ var scenario = "normal"
 var clicks = 0
 var snapshots = 0
 var processQueries = 0
+var requestedStop = false
 struct XCUIElementSnapshot {
     let elementType: XCUIElement.ElementType
     let label, title: String
@@ -20,6 +21,7 @@ struct XCUIElement {
     var isEnabled: Bool { scenario != "disabled-button" }
     func snapshot() throws -> XCUIElementSnapshot {
         snapshots += 1
+        if scenario == "stop-during-final-query" && snapshots > 1 { requestedStop = true }
         let prompt = "“Cadence.app” is an app downloaded from the Internet. Are you sure you want to open it?"
         var labels = [prompt]
         if scenario == "warning" || (scenario == "changed-tree" && snapshots > 1) { labels += ["Apple could not verify it is free of malware."] }
@@ -56,6 +58,7 @@ struct Harness {
     var normalOpenAttempted = false
     var preflightConsentWindowsAbsent: Bool { scenario != "preexisting-prompt" }
     var normalOpenAllowed: Bool { scenario != "disabled" }
+    var stopRequested: Bool { scenario == "stop-before-controller" || requestedStop }
 SWIFT
 awk '
     /^    struct (Binding|Launch|OwnedProcess|Owner|Node)[: ]/ ||
@@ -92,9 +95,11 @@ cat >> "$work/controller.swift" <<'SWIFT'
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
         let rejected = ["spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
-        let noAction = ["disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners"]
+        let noAction = ["disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
         for name in ["normal"] + rejected + noAction {
-            scenario = name; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false
+            scenario = name; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false
+            // Model capture finishing after the parent has requested teardown.
+            if name == "stop-during-capture" { requestedStop = true }
             do {
                 try openNormalConfirmation(binding, Launch(launcherPID: 900))
                 precondition(!rejected.contains(name), "Unsafe state did not fail: \(name)")

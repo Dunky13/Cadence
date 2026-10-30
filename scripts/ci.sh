@@ -17,6 +17,8 @@ actionlint .github/workflows/*.yml
 ./scripts/tests/observer-bootstrap-contracts.sh
 ./scripts/tests/observer-tree-contracts.sh
 ./scripts/tests/observer-stage-contracts.sh
+./scripts/tests/observer-attachment-contracts.sh
+./scripts/tests/observer-export-contracts.sh
 ./scripts/tests/first-open-contracts.sh
 ./scripts/tests/observer-capture-contracts.sh
 # Compile the independent QA fixture/test runner, never execute its UI session.

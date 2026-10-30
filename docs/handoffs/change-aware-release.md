@@ -1,106 +1,104 @@
-# Change-aware release and native CI repair
+# PR #11: Change-aware release and native CI repair
 
-## Scope and behavior
+[Pull request](https://github.com/Dunky13/Cadence/pull/11)
+
+## Result and scope
 
 The release timer changes from every fifteen minutes to daily at 05:23 UTC.
-Successful trusted-main CI still starts release selection immediately. Automatic
-runs skip distribution, publication and installation when the same automation
-commit already reached distribution, whether that attempt passed or failed.
-Preflight-only failures/skips do not suppress a later successful CI event.
-An intentional no-input dispatch can retry unchanged code using current retained
-custody; candidate bytes, Apple UUIDs and publication reconciliation stay intact.
+Successful trusted-main CI still starts selection immediately. Automatic runs
+skip distribution, publication and installation when the same automation commit
+already reached a completed, non-skipped trusted distribution job, whether that
+attempt passed or failed. Preflight-only failures/skips do not suppress a later
+successful CI event. Intentional manual dispatch can retry unchanged code using
+current retained candidate custody. Signing, submission-once, publication and
+frozen product bytes are unchanged.
 
-The user authorized one narrowly verified ordinary Cadence first-open Open
-action. The controller requires the public executable identity, unique stopped
-product/snapshot process, exact LaunchServices launcher, no competing Cadence
-processes or pre-existing consent window, and the unique Apple-signed system
-dialog owner. Complete allowlisted normal text and exactly Cancel/Open buttons
-are mandatory. It rechecks identities and the dialog tree before clicking once.
-Unknown dialogs, warnings, missing controller readiness and terminal controller
-failure block qualification. Quarantine, Gatekeeper, signing and permissions are
-preserved. The original thirty-second demo snapshot requirement remains.
+The user authorized one narrowly verified normal Cadence first-open Open action.
+The controller requires exact public app identity, one owned stopped product and
+snapshot arguments, its exact LaunchServices launcher, no competing Cadence or
+pre-existing consent window, a unique Apple-signed system owner, complete normal
+allowlisted text, and exactly Cancel/Open buttons. Unknown dialogs and warnings
+fail. Stop is checked at entry, after awaited capture and immediately before the
+click. The original thirty-second demo snapshot requirement remains.
 
-Hosted native PR/main CI now exercises this same consumer flow against the
-immutable public v0.2.0/build15 fixture, without signing credentials, signing
-environments or write permissions. This checks installer automation before main;
-it does not qualify newly built product bytes. Safe allowlisted evidence includes
-the controller action separately from product startup evidence.
+## Proven bootstrap failure and repair
 
-## Failure evidence and review
+[CI 41075530961](https://github.com/Dunky13/Cadence/actions/runs/41075530961)
+retained the explicitly approved temporary encrypted credential-free XCTest logs.
+All four downloaded artifact archive digests matched GitHub metadata. Both
+locally decrypted logs matched their existing bootstrap fingerprints:
 
-[Release run 41066003103](https://github.com/Dunky13/Cadence/actions/runs/41066003103)
-repeated automation commit `7d48bf6ddebb00914c08782ff2bffab35e34002e`.
-Both consumers passed trust checks, then timed out with no native snapshot.
-The arm64 witness records the exact owned translocated product stopped in state
-T; XCTest exited 65 without readiness. The diagnostic cause remains UNKNOWN.
-This evidence does not establish the hosted prompt identity or bootstrap cause.
+| Native runner | Client bytes | SHA-256 |
+| --- | ---: | --- |
+| arm64 | 10168 | `17e85fef9d64704cb6c1a5201c93f6213e5a756a78d5b7b4f77daba8b6bde691` |
+| Intel | 9697 | `f9662d038f8cf7933a1a4bfbdd2e6bcaf96d02d85948e724466c5156ace2b932` |
 
-Independent Standards and Spec reviews found that controller rejection could
-remain optional if the product later produced its PNG. The real finish callback
-and outer EXIT cleanup reproduced that failure. The repair makes enabled
-controller failure authoritative while retaining optional read-only telemetry
-semantics and preserving the single product-evidence artifact. Both independent
-re-reviews accepted the repair at source tree
-`36dc0dcf5ee9927f54aedeb0cf0e0d93bb0c9dff`, with no further source findings.
+Both tests executed candidate verification, screen-session initialization and
+owner preflight, then failed with NSCocoaErrorDomain 513 / NSPOSIXErrorDomain 1
+saving `observer-control/ready`. The sandboxed runner could read external input
+but could not write the parent's control/evidence directory. Its optional stage
+and error writes failed for the same reason; absent markers did not prove that
+test execution never started. Local final codesign inspection confirms App
+Sandbox with read-only external-file access; the build now verifies that sandbox
+entitlement rather than removing it or granting filesystem exceptions.
 
-## Validation and remaining gates
+Ready/done now use exact observation-ID-bound stdout markers through FileHandle.
+The parent remains the only writer of external control and evidence files.
+Native evidence uses nonce-bound named XCTest attachments with keepAlways.
+After verified teardown and client reaping, the parent privately exports the
+result bundle and validates the exact test, nonce, generated names/extensions,
+owned regular-file bounds and JSON bindings. Only existing allowlisted evidence
+is retained. Highest validated stage wins; any session HOLD dominates success.
+Foreign/duplicate/unsafe attachments or extraction failure hold qualification.
+Raw result bundles, manifests, automatic screenshots and client logs are never
+uploaded. No sandbox, Gatekeeper, quarantine or permission setting is weakened.
 
-The user approved temporary encrypted credential-free XCTest client-log capture
-after both architectures again exited 65 without any session-stage output in
-run 41072839914. Temporary wiring is restricted to `macOS CI` pull-request jobs,
-after verified observer teardown and client reaping. It rejects unsafe or
-oversize inputs, reads at most 1 MiB, encrypts through OpenSSL CMS to a one-time
-public certificate and uploads ciphertext only in a separate one-day artifact.
-The private key stays protected outside version control. No plaintext log,
-environment or test-plan upload is authorized. The helper, public certificate,
-flag and uploader must be removed after diagnosis and repair; delete the
-temporary ciphertext/key after required evidence closure.
-The encryption round trip and ten negative/gating cases pass locally, along
-with all 55 observer lifecycle/cleanup contracts, ShellCheck and actionlint.
-Independent Standards and Spec reviews of tree
-`f2f2a7e80fdc0e7764219cd54038e521e0f4c077` report no actionable findings. These
-checks do not establish the actual hosted error; the next PR run must retain
-the encrypted client log for local diagnosis.
+A local unit-test-only Xcode probe verified live marker forwarding more than
+seven seconds before test completion and the actual attachment export format.
+No local UI session or product launch was performed. Hosted PR/main CI exercises
+the public-install flow against immutable v0.2.0/build15 without signing secrets,
+write permission or a signing environment; this qualifies installer automation,
+not newly built product bytes.
 
-PR #11's initial hosted run 41071030513 failed: arm64 passed trust gates but
-XCTest still exited 65 before readiness; Intel exhausted the existing bounded
-retries after repeated Apple CloudKit connection losses. The arm64 bootstrap
-flags remain UNKNOWN. Compile-only inspection confirmed the generated runner,
-fixture paths and test-host environment injection. No plan mismatch is proven.
-An additional optional `session-stage.json` records only eight fixed bootstrap
-states around candidate verification, the screen session, system-window queries
-and readiness. It cannot change controller results and contains no client text,
-environment, plan values or runtime acceptance. This probe does not fix or
-classify the underlying hosted failure; it identifies the reached boundary.
-The exact enum/writer passes all eight fixed states plus nil, missing and
-occupied-output cases. The 139 bootstrap privacy/signal contracts and updated
-QA compilation pass. Independent incremental Standards and Spec reviews found
-no production issue. Standards identified a non-owned missing-directory test
-fixture; root replaced it with an absent child of the owned temporary directory
-and verified it remains absent. No independent re-review of that small fixture
-repair is claimed.
+## Validation and review
 
-Local focused checks pass: 50 release-selection contracts, 21 inert consent
-controller cases, 27 dialog-policy cases, 55 observer lifecycle/cleanup cases,
-21 inert capture cases, 139 bootstrap privacy/deadline/signal cases, ShellCheck
-and actionlint. The full local CI script passed on arm64/macOS 27.0.1/Xcode 27.1,
-including 59 Swift tests with real launchd integration, the native app build,
-and all signing/recovery/publication contracts. Final changed observer sources
-also passed build-for-testing; no local UI session or product launch was run.
-The final controller/outer-cleanup cases were rerun after the review repair.
+The full local scripts/ci.sh passes on arm64/macOS 27/Xcode 27.1, including 59
+Swift tests with real launchd integration, native app build, workflow/static
+checks, and all signing/recovery/publication contracts. Focused final checks
+pass: 24 inert Open-controller cases, 24 attachment/signal cases, 17 exporter
+cases, eight stage cases plus optional-output failures, 57 observer lifecycle
+cases, 21 inert capture cases and the existing privacy/provenance contracts.
+Final changed QA sources also pass build-for-testing with sandbox verification.
+These are local/source results, not hosted runtime acceptance.
 
-Hosted arm64 and Intel controller readiness, actual verified normal Open and
-native startup are required before describing the CI failure as repaired.
-Synthetic cases and compile-only checks do not establish those outcomes.
-Any hosted failure must be diagnosed and repaired in the same PR. Public release
-qualification/completion, publication, Apple submissions, merge and deployment
-are not performed by this implementation task.
+Independent Standards and Spec reviews initially found controller failures could
+be ignored after successful product startup. The real finish/outer cleanup
+reproduced that problem; the repair and both re-reviews passed at tree
+36dc0dcf5ee9927f54aedeb0cf0e0d93bb0c9dff. The attachment transport review found a
+stop request could arrive during capture/final queries and still permit Open.
+Its inert regression fails against the reviewed method and passes after the
+stop guards. Both independent re-reviews report no further findings at tree
+06dae2fece2afe5a1e5734fab378372b91f5d47e. Subsequent changes are this handoff's
+updated evidence and structure.
 
-After merge, an intentional release recovery uses the installed GitHub CLI from
-the repository root: `gh workflow run release.yml --ref main`. This is a release
-operation, separate from this PR's credential-free CI validation; do not run it
-as a substitute for the native PR checks.
+## Remaining gates and cleanup
 
-Task failure witnesses and standalone HTML handoff are local ignored evidence;
-they are not committed. Disposable helper builds and test scratch must be removed
-after local validation, while retaining source-review and failure evidence.
+Repaired-head hosted arm64 and Intel readiness, actual dialog matching, native
+startup and finalized result/attachment export remain required. Missing UI
+images are optional telemetry; unknown dialogs, controller failure and enabled
+collection failure cannot qualify a startup. If checks fail, diagnose and repair
+in this same PR without weakening the gate. ci-required correctly fails when
+native checks fail and packaging is skipped.
+
+The temporary encrypted-log helper, public certificate, CI flag and uploader
+are removed from the repaired source. The protected one-time key, private logs
+and two task-owned encrypted remote artifacts remain only until repair/evidence
+closure, then must be deleted. Keep safe fingerprints and sanitized failure
+summaries. Local temporary builds/test scratch must also be removed before final
+handoff; ignored validation logs and the standalone offline HTML remain local.
+
+No merge, Apple submission, public release or deployment was performed. The
+schedule change is not live until the PR is merged. The authorized implementation
+endpoint is a signed, pushed, reviewed PR; merge needs the user's separate
+approval after required checks pass. To inspect checks from a repository checkout:
+`gh pr checks 11 --repo Dunky13/Cadence`.

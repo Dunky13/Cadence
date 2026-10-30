@@ -58,7 +58,6 @@ jobs:
           EXPECTED_TEAM_ID: U9GXK89565
           EXPECTED_NATIVE_ARCH: ${{ matrix.arch }}
           LAUNCH_UI_ALLOW_NORMAL_OPEN: 'true'
-          LAUNCH_UI_ENCRYPT_CLIENT_LOG: 'true'
           LAUNCH_UI_BUILD_DIR: ${{ runner.temp }}/public-launch-ui-build
           INSTALL_EVIDENCE_DIR: ${{ runner.temp }}/consumer-evidence
           LAUNCH_UI_EVIDENCE_DIR: ${{ runner.temp }}/launch-ui-evidence
@@ -87,14 +86,6 @@ jobs:
             ${{ runner.temp }}/launch-ui-evidence/system-*.png
           if-no-files-found: warn
           retention-days: 14
-      - name: Temporarily retain only encrypted credential-free XCTest client log
-        if: ${{ always() && github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: Cadence-Encrypted-XCTest-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/launch-ui-evidence/xcode-client.cms
-          if-no-files-found: warn
-          retention-days: 1
 
   universal:
     name: Universal app and drag-and-drop installer

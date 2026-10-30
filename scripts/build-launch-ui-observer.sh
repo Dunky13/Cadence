@@ -13,4 +13,10 @@ xcodebuild build-for-testing -project "$root/qa/LaunchUIObserver/LaunchUIObserve
         printf 'QA observer build-for-testing failed; private build log retained (not uploadable).\n' >&2
         exit 1
     }
+runner="$destination/Build/Products/Debug/LaunchUIObserverTests-Runner.app"
+codesign -d --entitlements :- "$runner" > "$destination/runner-entitlements-private.plist" 2>> "$destination/build-private.log"
+[[ $(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$destination/runner-entitlements-private.plist") == true ]] || {
+    printf 'QA runner sandbox was not preserved.\n' >&2
+    exit 1
+}
 printf 'QA observer build-for-testing passed; no UI tests or product build executed.\n'

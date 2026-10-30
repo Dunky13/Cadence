@@ -17,27 +17,46 @@ fi
 printf 'session\n' >> "$FIXTURE/calls"
 control=$(plutil -extract LaunchUIObserverTests.EnvironmentVariables.CADENCE_OBSERVER_CONTROL raw -o - "$3")
 evidence=$(plutil -extract LaunchUIObserverTests.EnvironmentVariables.CADENCE_OBSERVER_EVIDENCE raw -o - "$3")
+nonce=$(jq -r '.observationID' "$control/binding.json")
+result=''; previous=''
+for argument in "$@"; do
+    if [[ $previous == -resultBundlePath ]]; then result=$argument; fi
+    previous=$argument
+done
+[[ $result == "$control/result.xcresult" ]] || exit 98
 case $FIXTURE_CASE in
     session-fail) exit 71 ;;
     protocol-missing) printf 'Missing private observer protocol paths: FAKE_SECRET=private\n'; exit 65 ;;
     never-ready) while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 72 ;;
-    wrong-ready) printf 'wrong-token' > "$control/ready"; while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 73 ;;
+    wrong-ready) printf 'CadenceObserverReady:wrong-token\n'; while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 73 ;;
 esac
-jq -jr '.observationID' "$control/binding.json" > "$control/ready"
+printf 'CadenceObserverReady:%s\n' "$nonce"
 while [[ ! -e $control/launch.json && ! -e $control/stop ]]; do /bin/sleep 0.01; done
 if [[ $FIXTURE_CASE == hung-session ]]; then
     trap '' TERM
     while true; do /bin/sleep 0.01; done
 fi
+mkdir -p "$result/export"
+jq -n --arg nonce "$nonce" '[{testIdentifier:"ObserverTests/testObserveExistingLaunch()",attachments:[
+    {suggestedHumanReadableName:("CadenceObserver-"+$nonce+"-observation-0_0_BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB.json"),exportedFileName:"observation.json"},
+    {suggestedHumanReadableName:("CadenceObserver-"+$nonce+"-session_0_CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC.txt"),exportedFileName:"session.txt"}]}]' > "$result/export/manifest.json"
+jq -n --slurpfile binding "$control/binding.json" '{binding:$binding[0],launcherPID:900,capturedUTC:"synthetic",ownedProcesses:[],windows:[],unavailableOwners:[],limited:false,complete:true,interpretation:"Synthetic only"}' > "$result/export/observation.json"
 if [[ $FIXTURE_CASE == permission-request ]]; then
-    printf 'HOLD: synthetic permission request; no action\n' > "$evidence/session.txt"
+    printf 'HOLD: synthetic permission request; no action\n' > "$result/export/session.txt"
     exit 74
 fi
-cp "$control/binding.json" "$evidence/observation-0.json"
-printf 'Observed: SYNTHETIC only\n' > "$evidence/session.txt"
-printf 'done\n' > "$control/done"
+printf 'Observed: SYNTHETIC only\n' > "$result/export/session.txt"
+printf 'CadenceObserverDone:%s\n' "$nonce"
 STUB
 chmod +x "$work/bin/xcodebuild"
+cat > "$work/bin/xcrun" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+[[ $# == 7 && $1 == xcresulttool && $2 == export && $3 == attachments && $4 == --path && $6 == --output-path ]] || exit 98
+[[ $FIXTURE_CASE != collector-failure && $FIXTURE_CASE != collector-failure-enabled ]] || exit 71
+cp -R "$5/export/." "$7/"
+STUB
+chmod +x "$work/bin/xcrun"
 cat > "$work/driver.sh" <<'DRIVER'
 #!/bin/bash
 set -euo pipefail
@@ -81,16 +100,19 @@ kill() {
 if [[ $FIXTURE_CASE == disabled ]]; then unset LAUNCH_UI_EVIDENCE_DIR; fi
 if [[ $FIXTURE_CASE == local ]]; then GITHUB_ACTIONS=false; fi
 if [[ $FIXTURE_CASE == missing-binding ]]; then unset LAUNCH_UI_EXPECTED_SHA256; fi
+if [[ $FIXTURE_CASE == collector-failure-enabled ]]; then export LAUNCH_UI_ALLOW_NORMAL_OPEN=true; fi
 launch_ui_prepare "$FIXTURE/Cadence.app" "$FIXTURE/scratch"
 if [[ $observer_ready == true ]]; then launch_ui_attach 900; fi
 if [[ $FIXTURE_CASE == diagnostic-output-fail ]]; then mkdir "$FIXTURE/evidence/bootstrap.json"; fi
 finish_result=0
 launch_ui_finish 42 || finish_result=$?
-if [[ $FIXTURE_CASE == kill-errors || $FIXTURE_CASE == ps-unavailable ]]; then
+if [[ $FIXTURE_CASE == collector-failure-enabled ]]; then
+    [[ $finish_result == 1 && $observer_cleanup_failed == false ]]
+elif [[ $FIXTURE_CASE == kill-errors || $FIXTURE_CASE == ps-unavailable ]]; then
     [[ $finish_result == 1 && $observer_cleanup_failed == true && -n $observer_launcher ]]
 else [[ $finish_result == 0 ]]; fi
 if [[ $FIXTURE_CASE == disabled ]]; then [[ ! -d $FIXTURE/evidence ]]; exit; fi
-jq -e '.original_startup_exit == "42" and .runtime_acceptance == false and .read_only == true' "$FIXTURE/evidence/status.json" >/dev/null
+jq -e --arg mode "${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false}" '.original_startup_exit == "42" and .runtime_acceptance == false and .read_only == ($mode != "true")' "$FIXTURE/evidence/status.json" >/dev/null
 case $FIXTURE_CASE in
     success|diagnostic-output-fail|diagnostic-missing-reader)
         jq -e '.status == "OBSERVED"' "$FIXTURE/evidence/status.json" >/dev/null
@@ -99,7 +121,7 @@ case $FIXTURE_CASE in
     *) jq -e '.status == "HOLD"' "$FIXTURE/evidence/status.json" >/dev/null ;;
 esac
 case $FIXTURE_CASE in
-    success|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable)
+    success|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable|collector-failure|collector-failure-enabled)
         grep -q '^session$' "$FIXTURE/calls"
         # Only private fixture/runner executable paths can be signaled.
         ! grep -Eq '1103|1104' "$FIXTURE/signals" ;;
@@ -108,7 +130,7 @@ esac
 # Verified teardown retains the actual reaped test exit and cannot qualify the
 # product. Missing/failing diagnostics never change original result or status.
 case $FIXTURE_CASE in
-    success|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session)
+    success|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|collector-failure|collector-failure-enabled)
         jq -e --argjson code "$observer_test_result" '.client_exit == $code and .status == "HOLD" and .cause == "UNKNOWN" and
             .runtime_acceptance == false and .authority_established == false and .causality_established == false' \
             "$FIXTURE/evidence/bootstrap.json" >/dev/null ;;
@@ -123,7 +145,7 @@ if [[ $FIXTURE_CASE == protocol-missing ]]; then
 fi
 DRIVER
 cases=0
-for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader success; do
+for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled success; do
     fixture="$work/$scenario"
     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/build/Build/Products"
     : > "$fixture/calls"
@@ -138,6 +160,7 @@ PLAN
     if [[ $scenario == diagnostic-missing-reader ]]; then
         mkdir "$fixture/isolated"
         cp "$observer_script" "$fixture/isolated/launch-ui-observer.sh"
+        cp "$root/scripts/collect-observer-evidence.sh" "$fixture/isolated/collect-observer-evidence.sh"
         observer_script="$fixture/isolated/launch-ui-observer.sh"
     fi
     PATH="$work/bin:$PATH" OBSERVER_SCRIPT="$observer_script" \

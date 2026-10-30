@@ -21,8 +21,8 @@ cat >> "$work/stage.swift" <<'SWIFT'
     }
     func run() throws {
         guard let evidence else { recordBootstrapStage(.ready); return }
-        let output = evidence.appendingPathComponent("session-stage.json")
-        for stage in BootstrapStage.allCases {
+        for (ordinal, stage) in BootstrapStage.allCases.enumerated() {
+            let output = evidence.appendingPathComponent("stage-\(ordinal).json")
             recordBootstrapStage(stage)
             let bytes = try Data(contentsOf: output)
             guard let value = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { preconditionFailure("Malformed stage JSON") }
@@ -31,6 +31,7 @@ cat >> "$work/stage.swift" <<'SWIFT'
             precondition(value["schema"] as? String == "cadence/ui-bootstrap-stage/v1")
             precondition(value["read_only"] as? Bool == true && value["runtime_acceptance"] as? Bool == false)
         }
+        let output = evidence.appendingPathComponent("stage-7.json")
         try FileManager.default.removeItem(at: output)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: false)
         recordBootstrapStage(.ready) // occupied output is optional failure

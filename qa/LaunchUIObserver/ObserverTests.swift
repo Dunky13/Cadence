@@ -72,27 +72,52 @@ final class ObserverTests: XCTestCase {
     private let files = FileManager.default
     private var control: URL!
     private var evidence: URL!
+    private var observationID: String?
     private var normalOpenAttempted = false
     private var preflightConsentWindowsAbsent = false
     private var normalOpenAllowed: Bool {
         ProcessInfo.processInfo.environment["CADENCE_ALLOW_NORMAL_OPEN"] == "true"
     }
+    private var stopRequested: Bool {
+        guard let control else { return true }
+        return files.fileExists(atPath: control.appendingPathComponent("stop").path)
+    }
 
     private func write<T: Encodable>(_ value: T, to url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(value).write(to: url, options: .atomic)
+        try retainEvidence(encoder.encode(value), name: url.lastPathComponent)
     }
 
     private func text(_ value: String, to url: URL) throws {
-        try Data(value.utf8).write(to: url, options: .atomic)
+        try retainEvidence(Data(value.utf8), name: url.lastPathComponent)
+    }
+
+    private func retainEvidence(_ data: Data, name: String) throws {
+        guard let observationID, UUID(uuidString: observationID) != nil,
+              name.range(of: "^(stage-[0-7]\\.json|session\\.txt|first-open\\.json|observation-[0-2]\\.json|system-[0-2]-[1-9][0-9]*-[0-7]\\.png)$", options: .regularExpression) != nil else {
+            throw NSError(domain: "InvalidEvidenceNameHOLD", code: 1)
+        }
+        let type = name.hasSuffix(".json") ? "public.json" : (name.hasSuffix(".png") ? "public.png" : "public.plain-text")
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: type)
+        attachment.name = "CadenceObserver-\(observationID)-\(name)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func signal(_ kind: String, id: String) throws {
+        guard ["Ready", "Done"].contains(kind), UUID(uuidString: id) != nil else {
+            throw NSError(domain: "InvalidObserverSignalHOLD", code: 1)
+        }
+        try FileHandle.standardOutput.write(contentsOf: Data("CadenceObserver\(kind):\(id)\n".utf8))
     }
 
     private func recordBootstrapStage(_ stage: BootstrapStage) {
         guard let evidence else { return }
         // Fixed vocabulary only. Failure of this optional diagnostic must not
         // change controller readiness, assertions, or the startup outcome.
-        try? write(BootstrapProgress(stage: stage), to: evidence.appendingPathComponent("session-stage.json"))
+        guard let ordinal = BootstrapStage.allCases.firstIndex(of: stage) else { return }
+        try? write(BootstrapProgress(stage: stage), to: evidence.appendingPathComponent("stage-\(ordinal).json"))
     }
 
     private func read<T: Decodable>(_ type: T.Type, _ name: String) throws -> T {
@@ -225,7 +250,7 @@ final class ObserverTests: XCTestCase {
     }
 
     private func openNormalConfirmation(_ binding: Binding, _ launch: Launch) throws {
-        guard normalOpenAllowed, !normalOpenAttempted else { return }
+        guard normalOpenAllowed, !normalOpenAttempted, !stopRequested else { return }
         guard preflightConsentWindowsAbsent else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
         // No trust/permission configuration, interruption handler, app activation,
         // warning override, or generic button matching is permitted here.
@@ -274,6 +299,7 @@ final class ObserverTests: XCTestCase {
         guard safeTree(try window.snapshot(), budget: &budget) == tree else {
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
         }
+        guard !stopRequested else { return }
         normalOpenAttempted = true
         open.element.click()
         try write(["action": "verified-normal-open", "observation_id": binding.observationID],
@@ -367,7 +393,7 @@ final class ObserverTests: XCTestCase {
             windows: windows, unavailableOwners: unavailable, limited: limited, complete: complete,
             interpretation: "Read-only system UI observation; window ownership is Apple-signature/PID bound. Candidate causality and button meaning are unclassified. No runtime acceptance.")
         try write(observation, to: evidence.appendingPathComponent("observation-\(index).json"))
-        for (name, data) in images { try data.write(to: evidence.appendingPathComponent(name), options: .atomic) }
+        for (name, data) in images { try retainEvidence(data, name: name) }
         return CaptureResult(imageAvailable: !images.isEmpty, complete: complete)
     }
 
@@ -395,13 +421,14 @@ final class ObserverTests: XCTestCase {
         }
         control = URL(fileURLWithPath: controlPath)
         evidence = URL(fileURLWithPath: evidencePath)
+        let binding = try read(Binding.self, "binding.json")
+        observationID = binding.observationID
         recordBootstrapStage(.protocolPathsReceived)
         var completed = false
         defer {
             if !completed { try? text("HOLD: native observation did not complete; normal Open attempted=\(normalOpenAttempted); no permission grant.\n", to: evidence.appendingPathComponent("session.txt")) }
-            try? text("done\n", to: control.appendingPathComponent("done"))
+            try? signal("Done", id: binding.observationID)
         }
-        let binding = try read(Binding.self, "binding.json")
         recordBootstrapStage(.candidateCheckStarted)
         guard validCandidate(URL(fileURLWithPath: binding.copiedPath), binding) else {
             throw NSError(domain: "CandidateIdentityMismatch", code: 1)
@@ -433,7 +460,7 @@ final class ObserverTests: XCTestCase {
         }
         recordBootstrapStage(.ownerPreflightReady)
         preflightConsentWindowsAbsent = true
-        try text(binding.observationID, to: control.appendingPathComponent("ready"))
+        try signal("Ready", id: binding.observationID)
         recordBootstrapStage(.ready)
         let deadline = Date().addingTimeInterval(65)
         while !files.fileExists(atPath: control.appendingPathComponent("launch.json").path) {
@@ -449,8 +476,10 @@ final class ObserverTests: XCTestCase {
                 if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
                 try await Task.sleep(for: .milliseconds(100))
             }
-            try openNormalConfirmation(binding, launch)
+            if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
             progress.include(try await capture(binding, launch, index: index))
+            if stopRequested { break }
+            try openNormalConfirmation(binding, launch)
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
         }
         let status = progress.observed

@@ -87,6 +87,7 @@ launch_ui_prepare() {
     observer_control=''
     observer_launcher=''
     observer_plan=''
+    observer_id=''
     observer_test_result=unavailable
     observer_cleanup_failed=false
     [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]] || return 0
@@ -142,17 +143,18 @@ launch_ui_prepare() {
     plutil -replace "$observer_key.CADENCE_ALLOW_NORMAL_OPEN" -string "${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false}" "$observer_plan" || return 1
     perl -e 'alarm 100; exec @ARGV; die "Cannot execute QA session\n";' -- \
         xcodebuild test-without-building -xctestrun "$observer_plan" -destination 'platform=macOS' \
+        -resultBundlePath "$observer_control/result.xcresult" \
         -parallel-testing-enabled NO -test-timeouts-enabled YES \
         -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 90 \
         > "$observer_control/xcode-private.log" 2>&1 &
     observer_launcher=$!
     for ((observer_wait=0; observer_wait<35; observer_wait++)); do
-        if [[ -f $observer_control/ready && $(cat "$observer_control/ready") == "$observer_id" ]]; then
+        if grep -qxF "CadenceObserverReady:$observer_id" "$observer_control/xcode-private.log"; then
             observer_ready=true
             launch_ui_status READY 'Read-only XCTest session initialized before ordinary LaunchServices invocation.'
             return 0
         fi
-        [[ -f $observer_control/done ]] && break
+        if grep -qxF "CadenceObserverDone:$observer_id" "$observer_control/xcode-private.log"; then break; fi
         kill -0 "$observer_launcher" 2>/dev/null || break
         sleep 1
     done
@@ -167,7 +169,7 @@ launch_ui_attach() {
 }
 
 launch_ui_finish() {
-    local cleanup_result=0 bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
+    local cleanup_result=0 collection_result=0 bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
     launch_ui_stop || cleanup_result=1
     [[ ${observer_cleanup_failed:-false} != true ]] || cleanup_result=1
     if [[ ${observer_evidence_owned:-false} != true || -z ${LAUNCH_UI_EVIDENCE_DIR:-} || ! -d $LAUNCH_UI_EVIDENCE_DIR ]]; then
@@ -178,16 +180,13 @@ launch_ui_finish() {
     # separate fingerprint cannot change readiness, teardown or product results.
     if [[ $cleanup_result == 0 && -n ${observer_control:-} &&
         ${observer_test_result:-unavailable} =~ ^(0|[1-9][0-9]{0,2})$ ]]; then
+        "${BASH_SOURCE[0]%/*}/collect-observer-evidence.sh" "$observer_control/result.xcresult" "$LAUNCH_UI_EVIDENCE_DIR" "${observer_id:-}" || collection_result=1
         "$bootstrap_script" "$observer_control/xcode-private.log" "${observer_plan:-}" "$observer_test_result" ||
             printf 'Bootstrap diagnostic unavailable; original launch and observer results preserved.\n' >&2
-        if [[ ${LAUNCH_UI_ENCRYPT_CLIENT_LOG:-false} == true ]]; then
-            "${BASH_SOURCE[0]%/*}/seal-observer-client-log.sh" "$observer_control/xcode-private.log" "$LAUNCH_UI_EVIDENCE_DIR" ||
-                printf 'Encrypted client diagnostic unavailable; original results preserved.\n' >&2
-        fi
     else
         printf 'Bootstrap diagnostic unavailable: no verified reaped client; original results preserved.\n' >&2
     fi
-    if [[ $cleanup_result == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
+    if [[ $cleanup_result == 0 && $collection_result == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
         launch_ui_status OBSERVED 'Telemetry recorded; original startup result remains authoritative.' "$1"
@@ -196,12 +195,12 @@ launch_ui_finish() {
         if [[ -f $LAUNCH_UI_EVIDENCE_DIR/status.json ]]; then
             cp "$LAUNCH_UI_EVIDENCE_DIR/status.json" "$LAUNCH_UI_EVIDENCE_DIR/preflight.json" || return 1
         fi
-        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result." "$1"
+        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result." "$1"
     fi
     # Consent is an authoritative controller, unlike optional read-only images.
     # Rejection/failed XCTest cannot qualify a product that later renders a PNG.
     if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true &&
-        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 ) ]]; then
+        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 ) ]]; then
         return 1
     fi
     return "$cleanup_result"
