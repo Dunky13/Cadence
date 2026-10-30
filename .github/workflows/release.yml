@@ -6,7 +6,7 @@ on:
     types: [completed]
     branches: [main]
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '23 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -148,6 +148,7 @@ jobs:
       SOURCE_COMMIT: ${{ needs.preflight.outputs.source_sha }}
       EXPECTED_TEAM_ID: ${{ needs.distribution.outputs.team_id }}
       EXPECTED_NATIVE_ARCH: ${{ matrix.arch }}
+      LAUNCH_UI_ALLOW_NORMAL_OPEN: 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -184,6 +185,7 @@ jobs:
             ${{ runner.temp }}/launch-ui-evidence/bootstrap.json
             ${{ runner.temp }}/launch-ui-evidence/binding.json
             ${{ runner.temp }}/launch-ui-evidence/session.txt
+            ${{ runner.temp }}/launch-ui-evidence/first-open.json
             ${{ runner.temp }}/launch-ui-evidence/observation-0.json
             ${{ runner.temp }}/launch-ui-evidence/observation-1.json
             ${{ runner.temp }}/launch-ui-evidence/observation-2.json

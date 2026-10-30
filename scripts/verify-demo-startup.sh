@@ -58,6 +58,10 @@ trap 'exit 143' TERM
 spctl --assess --type execute --verbose=4 "$app"
 launch_ui_prepare "$app" "$work" || printf 'UI observer preparation unavailable; ordinary launch proceeds.\n' >&2
 [[ ${observer_cleanup_failed:-false} != true ]] || exit 1
+if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true && ${observer_ready:-false} != true ]]; then
+    printf 'Verified first-open controller did not establish readiness.\n' >&2
+    exit 1
+fi
 open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
 launcher=$!
 diagnostic_launcher=$launcher

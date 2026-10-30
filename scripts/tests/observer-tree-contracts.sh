@@ -20,7 +20,7 @@ struct XCUIElementSnapshot {
 struct Harness {
 SWIFT
 awk '
-    /^    struct Node:/ || /^    private func (safeTree|permissionRequest|editableContent|captureWindowID)\(/ { copy=1 }
+    /^    struct Node:/ || /^    private func (safeTree|permissionRequest|editableContent|captureWindowID|normalOpenConfirmation)\(/ { copy=1 }
     /^    struct WindowIdentity / { print; next }
     copy { print }
     copy && /^    }$/ { copy=0 }
@@ -50,6 +50,20 @@ cat >> "$work/policy.swift" <<'SWIFT'
         check(permissionRequest(filtered(.staticText, "authentication required")), "Authority request lost")
         let secure = XCUIElementSnapshot(elementType: .secureTextField, label: "secret", title: "", children: [])
         check(permissionRequest(filtered(.window, "", "", [secure])), "Secure child not recognized")
+        let normalPrompt = "“Cadence.app” is an app downloaded from the Internet. Are you sure you want to open it?"
+        let normalChildren = [normalPrompt, "Apple checked it for malicious software and none was detected."].map {
+            XCUIElementSnapshot(elementType: .staticText, label: $0, title: "", children: [])
+        } + ["Open", "Cancel"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) }
+        check(normalOpenConfirmation(filtered(.dialog, "", "", normalChildren)), "Normal first-open confirmation rejected")
+        check(!normalOpenConfirmation(filtered(.dialog, "", "", Array(normalChildren.dropLast()))), "Missing Cancel accepted")
+        for warning in ["Cadence.app will damage your computer.", "Apple could not verify it is free of malware.", "password", "Unrelated.app"] {
+            let extra = XCUIElementSnapshot(elementType: .staticText, label: warning, title: "", children: [])
+            check(!normalOpenConfirmation(filtered(.dialog, "", "", normalChildren + [extra])), "Unknown/warning text accepted")
+        }
+        let foreign = normalChildren.map { child in
+            XCUIElementSnapshot(elementType: child.elementType, label: child.label.replacingOccurrences(of: "Cadence.app", with: "Other.app"), title: child.title, children: child.children)
+        }
+        check(!normalOpenConfirmation(filtered(.dialog, "", "", foreign)), "Other app confirmation accepted")
         var deep = longChild
         for _ in 0..<18 { deep = XCUIElementSnapshot(elementType: .window, label: "", title: "", children: [deep]) }
         check(filtered(.window, "", "", [deep]).truncated, "Depth truncation lost")

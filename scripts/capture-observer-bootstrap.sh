@@ -107,6 +107,8 @@ my $ok = eval {
         test_bundle_signature_failure => qr/Code Signature Invalid|code signature (?:is )?invalid|Failed to verify code signature|not valid for use in process/i,
         destination_or_plan_failure => qr/Unable to find a destination matching|Failed to read xctestrun file|xctestrun file does not exist|Unable to read test plan/i,
         authorization_failure => qr/not authorized|authorization denied|UIAuthorityRequestHOLD|not permitted to use UI testing/i,
+        automation_initialization_failure => qr/Failed to initialize for UI testing|Timed out while enabling automation mode|Failed to enable automation mode/i,
+        test_execution_never_started => qr/Test runner never began executing tests|Testing cancelled because the test runner exited|Early unexpected exit/i,
         query_failure => qr/ProcessQueryUnavailable|SystemWindowQueryUnavailable|Failed to get matching snapshots|Failed to get screenshot/i,
     );
     my %signatures = map { $_ => $bool->($log_bytes =~ $patterns{$_}) } keys %patterns;

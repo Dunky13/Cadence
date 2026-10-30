@@ -75,6 +75,7 @@ struct NSRunningApplication {
 }
 struct Harness {
     let evidence: URL
+    private func openNormalConfirmation(_ binding: Binding, _ launch: Launch) throws {}
 SWIFT
 awk '
     /^    struct (Binding|Launch|OwnedProcess|Owner|Node|Window|CaptureResult|ObservationProgress|Observation)[: ]/ ||

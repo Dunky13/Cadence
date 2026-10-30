@@ -293,4 +293,55 @@ for product_result in 0 7 1; do
     if [[ $product_result == 1 ]]; then [[ $(wc -l < "$fixture/timer" | tr -d ' ') == 30 ]]; fi
     cases=$((cases + 1))
 done
+# A rejected consent controller is authoritative even if product startup passes.
+# Execute the real finish callback through the real outer EXIT cleanup.
+cat > "$work/controller-exit-driver.sh" <<'DRIVER'
+#!/bin/bash
+set -uo pipefail
+source "$OBSERVER_SCRIPT"
+source "$CLEANUP_SCRIPT"
+app="$FIXTURE/Cadence.app"
+work="$FIXTURE/scratch"
+launcher=''
+diagnostic_launcher=900
+diagnostic_script=/usr/bin/true
+observer_evidence_owned=true
+observer_ready=true
+observer_control=''
+observer_plan=''
+observer_cleanup_failed=false
+launch_ui_stop() { observer_test_result=$FIXTURE_CLIENT_EXIT; return 0; }
+ps() { return 0; }
+trap cleanup EXIT
+if [[ $FIXTURE_STATUS == 0 ]]; then
+    printf 'SYNTHETIC PNG\n' > "$INSTALL_EVIDENCE_DIR/startup-$(uname -m).png"
+fi
+exit "$FIXTURE_STATUS"
+DRIVER
+for shell_mode in -e +e; do
+    for enabled in false true; do
+        for client in 0 65; do
+            for original in 0 42; do
+                fixture="$work/controller-exit-$shell_mode-$enabled-$client-$original"
+                mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/ui" "$fixture/consumer"
+                printf 'Observed: synthetic controller\n' > "$fixture/ui/session.txt"
+                printf '{}\n' > "$fixture/ui/observation-0.json"
+                result=0
+                OBSERVER_SCRIPT="$root/scripts/launch-ui-observer.sh" CLEANUP_SCRIPT="$work/cleanup.sh" \
+                    FIXTURE="$fixture" FIXTURE_CLIENT_EXIT="$client" FIXTURE_STATUS="$original" \
+                    LAUNCH_UI_ALLOW_NORMAL_OPEN="$enabled" LAUNCH_UI_EVIDENCE_DIR="$fixture/ui" INSTALL_EVIDENCE_DIR="$fixture/consumer" \
+                    /bin/bash "$shell_mode" "$work/controller-exit-driver.sh" > "$fixture/log" 2>&1 || result=$?
+                expected=$original
+                if [[ $enabled == true && $client != 0 && $original == 0 ]]; then expected=1; fi
+                [[ $result == "$expected" ]] || { printf 'Controller rejection lost: enabled=%s client=%s original=%s returned=%s\n' "$enabled" "$client" "$original" "$result" >&2; exit 1; }
+                [[ ! -e $fixture/scratch ]] || exit 1
+                if [[ $original == 0 ]]; then
+                    files=("$fixture/consumer/"*)
+                    [[ ${#files[@]} == 1 && ${files[0]} == "$fixture/consumer/startup-$(uname -m).png" ]] || exit 1
+                fi
+                cases=$((cases + 1))
+            done
+        done
+    done
+done
 printf 'Launch UI observer: %s synthetic authority/lifecycle contracts passed; no native UI session executed.\n' "$cases"

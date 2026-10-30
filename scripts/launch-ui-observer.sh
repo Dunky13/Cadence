@@ -1,11 +1,12 @@
 #!/bin/bash
-# Sourced optional telemetry adapter. No UI actions or security configuration.
+# Sourced telemetry/verified first-open adapter. No security configuration.
 # Private xcodebuild logs/xctestrun/control files never enter the evidence artifact.
 
 launch_ui_status() {
     [[ ${observer_evidence_owned:-false} == true && -n ${LAUNCH_UI_EVIDENCE_DIR:-} && -d $LAUNCH_UI_EVIDENCE_DIR ]] || return 0
     jq -n --arg status "$1" --arg reason "$2" --arg result "${3:-pending}" \
-        '{status:$status,reason:$reason,original_startup_exit:$result,read_only:true,runtime_acceptance:false}' \
+        --arg normal_open "${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false}" \
+        '{status:$status,reason:$reason,original_startup_exit:$result,read_only:($normal_open != "true"),runtime_acceptance:false}' \
         > "$LAUNCH_UI_EVIDENCE_DIR/status.json"
 }
 
@@ -138,6 +139,7 @@ launch_ui_prepare() {
     fi
     plutil -replace "$observer_key.CADENCE_OBSERVER_CONTROL" -string "$observer_control" "$observer_plan" || return 1
     plutil -replace "$observer_key.CADENCE_OBSERVER_EVIDENCE" -string "$LAUNCH_UI_EVIDENCE_DIR" "$observer_plan" || return 1
+    plutil -replace "$observer_key.CADENCE_ALLOW_NORMAL_OPEN" -string "${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false}" "$observer_plan" || return 1
     perl -e 'alarm 100; exec @ARGV; die "Cannot execute QA session\n";' -- \
         xcodebuild test-without-building -xctestrun "$observer_plan" -destination 'platform=macOS' \
         -parallel-testing-enabled NO -test-timeouts-enabled YES \
@@ -168,7 +170,10 @@ launch_ui_finish() {
     local cleanup_result=0 bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
     launch_ui_stop || cleanup_result=1
     [[ ${observer_cleanup_failed:-false} != true ]] || cleanup_result=1
-    [[ ${observer_evidence_owned:-false} == true && -n ${LAUNCH_UI_EVIDENCE_DIR:-} && -d $LAUNCH_UI_EVIDENCE_DIR ]] || return "$cleanup_result"
+    if [[ ${observer_evidence_owned:-false} != true || -z ${LAUNCH_UI_EVIDENCE_DIR:-} || ! -d $LAUNCH_UI_EVIDENCE_DIR ]]; then
+        [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} != true ]] || return 1
+        return "$cleanup_result"
+    fi
     # Only after verified stop, while private control/plan still exist. This
     # separate fingerprint cannot change readiness, teardown or product results.
     if [[ $cleanup_result == 0 && -n ${observer_control:-} &&
@@ -181,13 +186,19 @@ launch_ui_finish() {
     if [[ $cleanup_result == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
-        launch_ui_status OBSERVED 'Read-only telemetry only; system UI causality unclassified.' "$1"
+        launch_ui_status OBSERVED 'Telemetry recorded; original startup result remains authoritative.' "$1"
     else
         # Retain any earlier precise preflight reason as well as final status.
         if [[ -f $LAUNCH_UI_EVIDENCE_DIR/status.json ]]; then
             cp "$LAUNCH_UI_EVIDENCE_DIR/status.json" "$LAUNCH_UI_EVIDENCE_DIR/preflight.json" || return 1
         fi
         launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result." "$1"
+    fi
+    # Consent is an authoritative controller, unlike optional read-only images.
+    # Rejection/failed XCTest cannot qualify a product that later renders a PNG.
+    if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true &&
+        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 ) ]]; then
+        return 1
     fi
     return "$cleanup_result"
 }

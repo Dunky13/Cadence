@@ -323,6 +323,7 @@ ${{ runner.temp }}/launch-ui-evidence/preflight.json
 ${{ runner.temp }}/launch-ui-evidence/bootstrap.json
 ${{ runner.temp }}/launch-ui-evidence/binding.json
 ${{ runner.temp }}/launch-ui-evidence/session.txt
+${{ runner.temp }}/launch-ui-evidence/first-open.json
 ${{ runner.temp }}/launch-ui-evidence/observation-0.json
 ${{ runner.temp }}/launch-ui-evidence/observation-1.json
 ${{ runner.temp }}/launch-ui-evidence/observation-2.json

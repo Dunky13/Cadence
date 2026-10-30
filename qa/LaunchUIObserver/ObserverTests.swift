@@ -4,8 +4,8 @@ import Security
 import ScreenCaptureKit
 import XCTest
 
-// This target deliberately contains no UI actions, interruption handlers, app
-// launch/activation, AX trust requests, or authorization resets.
+// Product launch remains owned by LaunchServices. The optional consent path
+// permits only a fully verified normal first-open confirmation, once per launch.
 @MainActor
 final class ObserverTests: XCTestCase {
     struct Binding: Codable {
@@ -61,6 +61,11 @@ final class ObserverTests: XCTestCase {
     private let files = FileManager.default
     private var control: URL!
     private var evidence: URL!
+    private var normalOpenAttempted = false
+    private var preflightConsentWindowsAbsent = false
+    private var normalOpenAllowed: Bool {
+        ProcessInfo.processInfo.environment["CADENCE_ALLOW_NORMAL_OPEN"] == "true"
+    }
 
     private func write<T: Encodable>(_ value: T, to url: URL) throws {
         let encoder = JSONEncoder()
@@ -180,6 +185,83 @@ final class ObserverTests: XCTestCase {
         return editable.contains { $0.rawValue == node.type } || node.children.contains(where: editableContent)
     }
 
+    private func normalOpenConfirmation(_ node: Node) -> Bool {
+        guard !node.truncated, !permissionRequest(node), !editableContent(node) else { return false }
+        func normalized(_ text: String) -> String {
+            text.replacingOccurrences(of: "“", with: "\"")
+                .replacingOccurrences(of: "”", with: "\"")
+                .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        func nodes(_ root: Node) -> [Node] { [root] + root.children.flatMap(nodes) }
+        let all = nodes(node)
+        let buttons = all.filter { $0.type == XCUIElement.ElementType.button.rawValue }
+            .map { normalized($0.label.isEmpty ? $0.title : $0.label) }.sorted()
+        guard buttons == ["Cancel", "Open"] else { return false }
+        let prompts = ["Cadence", "Cadence.app"].map {
+            "\"\($0)\" is an app downloaded from the Internet. Are you sure you want to open it?"
+        }
+        let labels = Set(all.flatMap { [normalized($0.label), normalized($0.title)] }.filter { !$0.isEmpty })
+        let allowed = Set(prompts + ["Cancel", "Open", "Cadence", "Cadence.app",
+            "Apple checked it for malicious software and none was detected."])
+        return prompts.contains(where: labels.contains) && labels.isSubset(of: allowed)
+    }
+
+    private func openNormalConfirmation(_ binding: Binding, _ launch: Launch) throws {
+        guard normalOpenAllowed, !normalOpenAttempted else { return }
+        guard preflightConsentWindowsAbsent else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
+        // No trust/permission configuration, interruption handler, app activation,
+        // warning override, or generic button matching is permitted here.
+        guard validCandidate(URL(fileURLWithPath: binding.copiedPath), binding) else {
+            throw NSError(domain: "CandidateIdentityMismatch", code: 1)
+        }
+        let owned = try ownedProcesses(binding)
+        guard owned.count == 1, owned[0].state.hasPrefix("T") else { return }
+        let products = try ps(["-axo", "pid=,comm="]).split(separator: "\n").compactMap { line -> Int32? in
+            let fields = line.trimmingCharacters(in: .whitespaces).split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+            guard fields.count == 2, fields[1].hasSuffix("/Cadence.app/Contents/MacOS/Cadence") else { return nil }
+            return Int32(fields[0])
+        }
+        guard products == owned.map(\.pid) else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
+        let command = try ps(["-p", String(launch.launcherPID), "-o", "command="])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let launcherExecutable = try ps(["-p", String(launch.launcherPID), "-o", "comm="])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let expected = "-n -W \(binding.copiedPath) --args --demo --snapshot \(binding.snapshotPath)"
+        guard launcherExecutable == "/usr/bin/open",
+              command == "open \(expected)" || command == "/usr/bin/open \(expected)" else {
+            throw NSError(domain: "InvalidLauncher", code: 1)
+        }
+        let owners = try systemOwners().filter {
+            $0.bundleID == "com.apple.coreservices.uiagent" &&
+                $0.applicationPath == "/System/Library/CoreServices/CoreServicesUIAgent.app"
+        }
+        guard owners.count == 1 else { return }
+        let owner = owners[0]
+        let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
+        let windows = proxy.windows.allElementsBoundByIndex
+        guard windows.count == 1 else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
+        let window = windows[0]
+        var budget = 1024
+        let tree = safeTree(try window.snapshot(), budget: &budget)
+        guard normalOpenConfirmation(tree) else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
+        let buttons = window.descendants(matching: .button)
+        let open = buttons.matching(NSPredicate(format: "label == %@ OR title == %@", "Open", "Open"))
+        guard buttons.count == 2, open.count == 1, open.element.isEnabled,
+              NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable,
+              signing(URL(fileURLWithPath: owner.applicationPath), requirement: "anchor apple"),
+              try ownedProcesses(binding).map(\.pid) == owned.map(\.pid) else {
+            throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
+        }
+        budget = 1024
+        guard safeTree(try window.snapshot(), budget: &budget) == tree else {
+            throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
+        }
+        normalOpenAttempted = true
+        open.element.click()
+        try write(["action": "verified-normal-open", "observation_id": binding.observationID],
+                  to: evidence.appendingPathComponent("first-open.json"))
+    }
+
     private func captureWindowID(_ windows: [WindowIdentity], pid: Int32, frame: CGRect) -> UInt32? {
         guard pid > 1, !frame.isEmpty, frame.width.isFinite, frame.height.isFinite,
               frame.width <= 4096, frame.height <= 4096 else { return nil }
@@ -276,10 +358,10 @@ final class ObserverTests: XCTestCase {
             try await observeExistingLaunch()
         } catch {
             if let evidence {
-                let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD", "ProcessQueryUnavailable", "SystemWindowQueryUnavailable", "InvalidLauncher"]
+                let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD", "ProcessQueryUnavailable", "SystemWindowQueryUnavailable", "InvalidLauncher", "UnknownFirstOpenHOLD"]
                 let domain = (error as NSError).domain
                 let reason = known.contains(domain) ? domain : "native-query-or-protocol-failure"
-                try? text("HOLD: \(reason); no UI action or permission grant.\n", to: evidence.appendingPathComponent("session.txt"))
+                try? text("HOLD: \(reason); normal Open attempted=\(normalOpenAttempted); no permission grant.\n", to: evidence.appendingPathComponent("session.txt"))
             }
             throw error
         }
@@ -297,7 +379,7 @@ final class ObserverTests: XCTestCase {
         evidence = URL(fileURLWithPath: evidencePath)
         var completed = false
         defer {
-            if !completed { try? text("HOLD: native observation did not complete; no UI action or permission grant.\n", to: evidence.appendingPathComponent("session.txt")) }
+            if !completed { try? text("HOLD: native observation did not complete; normal Open attempted=\(normalOpenAttempted); no permission grant.\n", to: evidence.appendingPathComponent("session.txt")) }
             try? text("done\n", to: control.appendingPathComponent("done"))
         }
         let binding = try read(Binding.self, "binding.json")
@@ -312,6 +394,9 @@ final class ObserverTests: XCTestCase {
         for owner in preflightOwners {
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
             let elements = proxy.windows.allElementsBoundByIndex
+            if normalOpenAllowed && owner.bundleID == "com.apple.coreservices.uiagent" && !elements.isEmpty {
+                throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
+            }
             guard elements.count <= 8 else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
             for element in elements {
                 var budget = 1024
@@ -322,6 +407,7 @@ final class ObserverTests: XCTestCase {
                 }
             }
         }
+        preflightConsentWindowsAbsent = true
         try text(binding.observationID, to: control.appendingPathComponent("ready"))
         let deadline = Date().addingTimeInterval(65)
         while !files.fileExists(atPath: control.appendingPathComponent("launch.json").path) {
@@ -337,11 +423,12 @@ final class ObserverTests: XCTestCase {
                 if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
                 try await Task.sleep(for: .milliseconds(100))
             }
+            try openNormalConfirmation(binding, launch)
             progress.include(try await capture(binding, launch, index: index))
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
         }
         let status = progress.observed
-            ? "Observed: read-only system window tree/screenshot captured. Dialog identity/cause remain unclassified; original startup result is authoritative.\n"
+            ? "Observed: system window tree/screenshot captured; normal Open attempted=\(normalOpenAttempted); original startup result is authoritative.\n"
             : "HOLD: no safe Apple system window tree/screenshot pair available. Partial observations retained; dialog unavailable.\n"
         try text(status, to: evidence.appendingPathComponent("session.txt"))
         completed = true
