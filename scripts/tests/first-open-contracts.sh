@@ -15,6 +15,7 @@ struct XCUIElementSnapshot {
     let elementType: XCUIElement.ElementType
     let label, title: String
     let children: [XCUIElementSnapshot]
+    var value: Any? = nil
 }
 struct XCUIElement {
     enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox, menuBar }
@@ -28,9 +29,17 @@ struct XCUIElement {
         let prompt = "“Cadence.app” is an app downloaded from the Internet. Are you sure you want to open it?"
         var labels = [prompt]
         if (scenario == "warning" || scenario == "diagnostic-write-failure") || (scenario == "changed-tree" && snapshots > 1) { labels += ["Apple could not verify it is free of malware."] }
+        func immutableValue(_ text: String) -> Any? {
+            if scenario == "value-only-text" { return text }
+            if scenario == "changed-static-value" && snapshots > 1 { return "Apple could not verify it is free of malware." }
+            if scenario == "non-string-static-value" { return 42 }
+            if scenario == "long-static-value" { return String(repeating: "x", count: 2049) }
+            return nil
+        }
+        let valueWarning = scenario == "static-value-warning" ? [XCUIElementSnapshot(elementType: .staticText, label: "", title: "", children: [], value: "Apple could not verify it is free of malware.")] : []
         return XCUIElementSnapshot(elementType: .dialog, label: "", title: "", children:
-            labels.map { XCUIElementSnapshot(elementType: .staticText, label: $0, title: "", children: []) } +
-            ["Cancel", "Open"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) })
+            labels.map { XCUIElementSnapshot(elementType: .staticText, label: scenario == "value-only-text" ? "" : $0, title: "", children: [], value: immutableValue($0)) } +
+            valueWarning + ["Cancel", "Open"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) })
     }
     func descendants(matching: ElementType) -> Query { Query(isOpen: false) }
     func click() { clicks += 1 }
@@ -103,8 +112,8 @@ cat >> "$work/controller.swift" <<'SWIFT'
     }
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
-        let accepted = ["normal", "dialog-surface", "alert-surface", "sheet-surface"]
-        let rejected = ["diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
+        let accepted = ["value-only-text", "normal", "dialog-surface", "alert-surface", "sheet-surface"]
+        let rejected = ["changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
         let noAction = ["missing-surface", "disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
         for name in accepted + rejected + noAction {
             scenario = name; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false
@@ -138,6 +147,7 @@ cat >> "$work/controller.swift" <<'SWIFT'
         let unsafe = [
             Node(type: safe.type, label: safe.label, title: "", children: [], truncated: true),
             Node(type: safe.type, label: "authentication required", title: "", children: [], truncated: false),
+            Node(type: XCUIElement.ElementType.staticText.rawValue, label: "", title: "", children: [], truncated: false, staticText: "authentication required"),
             Node(type: XCUIElement.ElementType.textField.rawValue, label: "EXCLUDED editable value", title: "", children: [], truncated: false),
             Node(type: XCUIElement.ElementType.secureTextField.rawValue, label: "EXCLUDED secure value", title: "", children: [], truncated: false)
         ]
@@ -154,7 +164,7 @@ cat >> "$work/controller.swift" <<'SWIFT'
                 precondition(record.windows[0].screenshot.isEmpty && record.windows[0].windowID == nil && record.binding.observationID == binding.observationID)
             }
         }
-        print("First-open controller: \(accepted.count + rejected.count + noAction.count + 9) inert exact-production contracts passed; no actual UI action.")
+        print("First-open controller: \(accepted.count + rejected.count + noAction.count + 5 + unsafe.count) inert exact-production contracts passed; no actual UI action.")
     }
 }
 @main struct Main {

@@ -359,6 +359,53 @@ and native app build passed at the preceding executable candidate; product and
 release-selection code are unchanged in this diagnostic increment. Hosted
 confirmation evidence and the actual Open/PNG outcome remain HOLD.
 
+## Verified confirmation shape and scoped immutable text
+
+[Run 41112227498](https://github.com/Dunky13/Cadence/actions/runs/41112227498)
+on `c82d84fba63e3ad2268b0d0857863fcb37746d9a` exports `confirmation.json`
+on both architectures. All four artifact archive hashes match GitHub metadata.
+Both filtered trees contain a Dialog root labeled `alert`, two static-text nodes
+with empty label/title fields, and exactly Help, Cancel and Open button nodes.
+The same owned stopped candidate is bound; observation is incomplete with no
+pixels or window ID. The controller rejects it without Open, and teardown,
+collection and broker all exit zero. ci-required correctly fails for native
+failure and skipped packaging; there is no independent aggregate defect.
+
+The filter previously never read accessibility values, so these nodes could not
+supply the mandatory complete prompt. A controller regression additionally
+shows the old filter accepts a known prompt plus a warning carried only by a
+static-text value. The candidate fixes that source-supported blind spot with
+an explicit opt-in used only by the verified CoreServices confirmation path.
+It reads String values only from static-text nodes, bounds them to 2048
+characters, marks oversize/non-string values incomplete, includes that text in
+permission/confirmation checks, and verifies it again in the final stable tree.
+Unknown label/title text is preserved alongside the immutable text. Generic
+telemetry and editable-field values remain unread; no identifiers, placeholders
+or pixels are added. Apple's [element-attribute interface](https://developer.apple.com/documentation/xcuiautomation/xcuielementattributes)
+distinguishes label, title and raw value attributes.
+
+The actual native static-text values are not yet observed. The candidate does
+not change allowed confirmation text, root-label handling, button counts or
+which action is permitted. Help and the `alert` metadata therefore still block
+this observed tree. The next bounded confirmation artifact must establish its
+full displayed text before a strict compatible profile can be considered.
+Source/inert results are not native Open or PNG acceptance.
+
+Focused local checks pass: first-open 45, policy/filtering 40, capture 22,
+export 25, attachment 27, lifecycle 75, bootstrap/privacy 140 and workflow 110,
+plus Bash syntax, ShellCheck, actionlint, whitespace and a sandbox-preserving QA
+build-for-testing. The old production controller fails the masked-value warning
+regression. Tests also refuse non-string/oversize values and changed final
+static text, and prove generic/editable value getters are never read. Product
+tests and the full native app build were not repeated for this QA-only change;
+preceding-head full-CI evidence remains separate.
+
+The bounded confirmation export is now verified on both native runners, so the
+temporary encrypted raw-log helper, recipient certificate, CI flag, caller and
+uploader are removed. A pinned negative contract prevents their accidental
+return. Existing protected keys and private evidence retain their ownership;
+no provider artifact or credential was changed or deleted.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,
@@ -367,11 +414,11 @@ installation, exact normal Open action, demo PNG, final evidence export and
 `ci-required`. These are HOLD until observed on the exact repaired head. If the
 run fails, continue diagnosis and repair in this PR without weakening its gates.
 
-The temporary encrypted-log helper, public certificate, CI flag and uploader
-remain only for closure of the current observation failure. Remove them before
-final acceptance. The pre-existing protected one-time key and private evidence
-are retained until repair/evidence closure; they are outside Git. No plaintext,
-private key or machine-local evidence path belongs in committed content.
+Temporary raw-log collection/upload and its public certificate are removed.
+The bounded filtered confirmation artifact remains the diagnostic path.
+Pre-existing protected keys and private evidence retain their ownership and
+remain outside Git until evidence closure. No plaintext client log, private key
+or machine-local evidence path belongs in committed content.
 Task-owned disposable builds and probes are removed after checks/review;
 ignored validation logs and the offline HTML handoff remain local evidence.
 

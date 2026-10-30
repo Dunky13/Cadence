@@ -12,10 +12,13 @@ import CoreGraphics
 enum XCUIElement {
     enum ElementType: UInt { case window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }
 }
+var valueReads = 0
 struct XCUIElementSnapshot {
     let elementType: XCUIElement.ElementType
     let label, title: String
     let children: [XCUIElementSnapshot]
+    var rawValue: Any? = nil
+    var value: Any? { valueReads += 1; return rawValue }
 }
 struct Harness {
 SWIFT
@@ -55,6 +58,31 @@ cat >> "$work/policy.swift" <<'SWIFT'
             XCUIElementSnapshot(elementType: .staticText, label: $0, title: "", children: [])
         } + ["Open", "Cancel"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) }
         check(normalOpenConfirmation(filtered(.dialog, "", "", normalChildren)), "Normal first-open confirmation rejected")
+        func withValue(_ kind: XCUIElement.ElementType, _ value: Any?, optedIn: Bool = true, label: String = "") -> Node {
+            var budget = 1024
+            return safeTree(XCUIElementSnapshot(elementType: kind, label: label, title: "", children: [], rawValue: value), budget: &budget, staticTextValues: optedIn)
+        }
+        valueReads = 0
+        check(withValue(.staticText, "EXCLUDED generic static value", optedIn: false).staticText == nil && valueReads == 0, "Generic capture read a value")
+        let immutable = withValue(.staticText, normalPrompt)
+        check(immutable.staticText == normalPrompt && !immutable.truncated && valueReads == 1, "Confirmation lost immutable text")
+        let oldButtonNodes = normalChildren.suffix(2).map { filtered($0.elementType, $0.label) }
+        let valuePrompt = Node(type: XCUIElement.ElementType.dialog.rawValue, label: "", title: "", children: [immutable] + oldButtonNodes, truncated: false)
+        check(normalOpenConfirmation(valuePrompt), "Value-only normal prompt rejected")
+        let valueWarning = withValue(.staticText, "Apple could not verify it is free of malware.")
+        check(!normalOpenConfirmation(Node(type: valuePrompt.type, label: "", title: "", children: valuePrompt.children + [valueWarning], truncated: false)), "Warning in immutable value was ignored")
+        check(permissionRequest(withValue(.staticText, "authentication required")), "Immutable authority request was ignored")
+        let longValue = withValue(.staticText, String(repeating: "x", count: 2049))
+        check(longValue.truncated && longValue.staticText?.count == 2048, "Immutable text truncation lost")
+        check(withValue(.staticText, 42).truncated, "Non-string immutable value was accepted")
+        check(!withValue(.staticText, nil).truncated, "Absent optional value became a malformed value")
+        let conflicting = withValue(.staticText, normalPrompt, label: "Unknown warning")
+        check(!normalOpenConfirmation(Node(type: valuePrompt.type, label: "", title: "", children: [conflicting] + oldButtonNodes, truncated: false)), "Value replaced an unknown semantic label")
+        valueReads = 0
+        for kind in [XCUIElement.ElementType.textField, .secureTextField, .textView, .comboBox] {
+            let hidden = withValue(kind, "EXCLUDED editable value")
+            check(hidden.staticText == nil && valueReads == 0 && hidden.label.isEmpty, "Editable value was read or retained")
+        }
         check(!normalOpenConfirmation(filtered(.dialog, "", "", Array(normalChildren.dropLast()))), "Missing Cancel accepted")
         for warning in ["Cadence.app will damage your computer.", "Apple could not verify it is free of malware.", "password", "Unrelated.app"] {
             let extra = XCUIElementSnapshot(elementType: .staticText, label: warning, title: "", children: [])

@@ -15,6 +15,7 @@ struct XCUIElementSnapshot {
     var label = "Safe synthetic text"
     var title = ""
     var children: [XCUIElementSnapshot] = []
+    var value: Any? = nil
 }
 struct XCUIElement {
     enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }

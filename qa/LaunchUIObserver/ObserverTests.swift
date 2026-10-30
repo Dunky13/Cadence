@@ -44,6 +44,7 @@ final class ObserverTests: XCTestCase {
         let label, title: String
         let children: [Node]
         let truncated: Bool
+        var staticText: String? = nil
     }
     struct WindowIdentity { let id: UInt32; let pid: Int32; let frame: CGRect }
     struct Window: Codable {
@@ -241,25 +242,34 @@ final class ObserverTests: XCTestCase {
         return children.filter { surfaces.contains($0.elementType) }
     }
 
-    private func safeTree(_ snapshot: XCUIElementSnapshot, budget: inout Int, depth: Int = 0) -> Node {
+    private func safeTree(_ snapshot: XCUIElementSnapshot, budget: inout Int, depth: Int = 0, staticTextValues: Bool = false) -> Node {
         budget -= 1
-        // Never retain values, editable text, placeholders, or identifiers.
+        // Generic telemetry never reads values. Only the verified confirmation
+        // caller opts into immutable static-text strings, never editable values.
         let readable: Set<XCUIElement.ElementType> = [.window, .dialog, .alert, .sheet, .button, .staticText]
         let show = readable.contains(snapshot.elementType)
+        var text: String?
+        var invalidText = false
+        if staticTextValues, snapshot.elementType == .staticText, let value = snapshot.value {
+            if let value = value as? String { text = value }
+            else { invalidText = true }
+        }
         let children = depth < 16 ? snapshot.children.prefix(128).compactMap { child -> Node? in
             guard budget > 0 else { return nil }
-            return safeTree(child, budget: &budget, depth: depth + 1)
+            return safeTree(child, budget: &budget, depth: depth + 1, staticTextValues: staticTextValues)
         } : []
         return Node(type: snapshot.elementType.rawValue,
                     label: show ? String(snapshot.label.prefix(2048)) : "",
                     title: show ? String(snapshot.title.prefix(2048)) : "", children: children,
                     truncated: (show && (snapshot.label.count > 2048 || snapshot.title.count > 2048))
-                        || children.count < snapshot.children.count || children.contains(where: { $0.truncated }))
+                        || invalidText || (text?.count ?? 0) > 2048
+                        || children.count < snapshot.children.count || children.contains(where: { $0.truncated }),
+                    staticText: text.map { String($0.prefix(2048)) })
     }
 
     private func permissionRequest(_ node: Node) -> Bool {
         // Conservative HOLD for authority/password UI; never handles/dismisses it.
-        let words = (node.label + " " + node.title).lowercased()
+        let words = (node.label + " " + node.title + " " + (node.staticText ?? "")).lowercased()
         return node.type == XCUIElement.ElementType.secureTextField.rawValue
             || ["password", "authenticate", "authentication", "automation mode", "accessibility access", "would like to control", "permission to"].contains(where: words.contains)
             || node.children.contains(where: permissionRequest)
@@ -285,7 +295,7 @@ final class ObserverTests: XCTestCase {
         let prompts = ["Cadence", "Cadence.app"].map {
             "\"\($0)\" is an app downloaded from the Internet. Are you sure you want to open it?"
         }
-        let labels = Set(all.flatMap { [normalized($0.label), normalized($0.title)] }.filter { !$0.isEmpty })
+        let labels = Set(all.flatMap { [normalized($0.label), normalized($0.title), normalized($0.staticText ?? "")] }.filter { !$0.isEmpty })
         let allowed = Set(prompts + ["Cancel", "Open", "Cadence", "Cadence.app",
             "Apple checked it for malicious software and none was detected."])
         return prompts.contains(where: labels.contains) && labels.isSubset(of: allowed)
@@ -344,7 +354,7 @@ final class ObserverTests: XCTestCase {
         guard windows.count == 1 else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
         let window = windows[0]
         var budget = 1024
-        let tree = safeTree(try window.snapshot(), budget: &budget)
+        let tree = safeTree(try window.snapshot(), budget: &budget, staticTextValues: true)
         guard normalOpenConfirmation(tree) else {
             recordRejectedConfirmation(tree, owner: owner, owned: owned, binding: binding, launch: launch)
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
@@ -358,7 +368,7 @@ final class ObserverTests: XCTestCase {
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
         }
         budget = 1024
-        guard safeTree(try window.snapshot(), budget: &budget) == tree else {
+        guard safeTree(try window.snapshot(), budget: &budget, staticTextValues: true) == tree else {
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
         }
         guard !stopRequested else { return }

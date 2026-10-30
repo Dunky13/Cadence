@@ -333,4 +333,14 @@ ${{ runner.temp }}/launch-ui-evidence/system-*.png
 PATHS
 cmp "$fixture/expected" "$fixture/paths" || fail 'UI upload allowlist broadened'
 grep -q -F "path: \${{ runner.temp }}/consumer-evidence/*" "$root/.github/workflows/release.yml" || fail 'consumer envelope changed'
+# The verified bounded confirmation attachment replaces temporary raw logging.
+new_case
+for removed in scripts/seal-observer-client-log.sh qa/LaunchUIObserver/bootstrap-diagnostic-recipient.pem; do
+    [[ ! -e $root/$removed && ! -L $root/$removed ]] || fail 'temporary raw-log material remains'
+done
+for source in scripts/launch-ui-observer.sh .github/workflows/ci.yml; do
+    if grep -Eq 'ENCRYPT_CLIENT_LOG|seal-observer-client-log|xcode-client[.]cms|Encrypted-XCTest' "$root/$source"; then
+        fail 'temporary raw-log capture or upload remains'
+    fi
+done
 printf 'Observer bootstrap: %s synthetic bounded/privacy/signal contracts passed; runtime/authority/causality remain unqualified.\n' "$cases"
