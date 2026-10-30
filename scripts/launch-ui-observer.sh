@@ -73,8 +73,33 @@ launch_ui_stop_product() {
     launcher=''
 }
 
+launch_ui_client_time_left() {
+    [[ ${observer_finalization_deadline:-} =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+    /usr/bin/perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e '
+        my $remaining = $ARGV[0] - clock_gettime(CLOCK_MONOTONIC);
+        exit($remaining > 0 && $remaining <= 35 ? 0 : 1);
+    ' "$observer_finalization_deadline"
+}
+
+launch_ui_wait_client() {
+    local state=''
+    launch_ui_client_time_left || return 1
+    while kill -0 "$observer_launcher" 2>/dev/null; do
+        launch_ui_client_time_left || return 1
+        state=$(ps -p "$observer_launcher" -o stat= 2>/dev/null) || {
+            if ! kill -0 "$observer_launcher" 2>/dev/null; then return 0; fi
+            return 1
+        }
+        state=${state//[[:space:]]/}
+        [[ $state != Z* ]] || return 0
+        [[ -n $state ]] || return 1
+        sleep 0.1 || return 1
+    done
+    return 0
+}
+
 launch_ui_stop() {
-    local cleanup_result=0 helpers='' signal pid state='' arguments=''
+    local cleanup_result=0 helpers='' signal pid state='' arguments='' client_reaped=false
     [[ -n ${observer_control:-} ]] || return 0
     : > "$observer_control/stop" || cleanup_result=1
     if [[ -z ${observer_launcher:-} ]]; then
@@ -84,8 +109,21 @@ launch_ui_stop() {
     fi
     for ((observer_wait=0; observer_wait<5; observer_wait++)); do
         if ! kill -0 "$observer_launcher" 2>/dev/null; then break; fi
+        if [[ ${observer_ready:-false} == true && -n ${observer_id:-} ]] &&
+            grep -qF "CadenceObserverDone:$observer_id:EndCadenceObserver" "$observer_control/xcode-private.log"; then break; fi
         sleep 1 || cleanup_result=1
     done
+    # Done acknowledges the test body, not successful XCTest/result export.
+    # Finalize inside the original launch window plus shutdown grace, with no
+    # fresh budget at Done. The independent 100-second client alarm is unchanged.
+    if [[ ${observer_ready:-false} == true && -n ${observer_id:-} ]] &&
+        grep -qF "CadenceObserverDone:$observer_id:EndCadenceObserver" "$observer_control/xcode-private.log"; then
+        if launch_ui_wait_client; then
+            observer_test_result=0
+            wait "$observer_launcher" 2>/dev/null || observer_test_result=$?
+            client_reaped=true
+        else observer_finalization_result=1; fi
+    fi
     for signal in TERM KILL; do
         if helpers=$(launch_ui_owned_helpers); then
             while read -r pid; do
@@ -101,11 +139,19 @@ launch_ui_stop() {
                 esac
             done <<< "$helpers"
         else cleanup_result=1; fi
-        if kill -0 "$observer_launcher" 2>/dev/null; then
+        if [[ $client_reaped == false ]] && kill -0 "$observer_launcher" 2>/dev/null; then
             arguments=$(ps -p "$observer_launcher" -o command= 2>/dev/null) || arguments=''
             if [[ $arguments == *"xcodebuild test-without-building -xctestrun $observer_plan "* ]]; then
                 if ! kill -s "$signal" "$observer_launcher" 2>/dev/null && kill -0 "$observer_launcher" 2>/dev/null; then cleanup_result=1; fi
-            else cleanup_result=1; fi
+            elif kill -0 "$observer_launcher" 2>/dev/null; then
+                state=$(ps -p "$observer_launcher" -o stat= 2>/dev/null) || state=''
+                state=${state//[[:space:]]/}
+                if [[ $state == Z* ]]; then
+                    observer_test_result=0
+                    wait "$observer_launcher" 2>/dev/null || observer_test_result=$?
+                    client_reaped=true
+                elif kill -0 "$observer_launcher" 2>/dev/null; then cleanup_result=1; fi
+            fi
         fi
         if [[ $signal == TERM ]]; then sleep 1 || cleanup_result=1; fi
     done
@@ -116,10 +162,13 @@ launch_ui_stop() {
         sleep 0.1 || cleanup_result=1
     done
     [[ -z $helpers ]] || cleanup_result=1
-    if kill -0 "$observer_launcher" 2>/dev/null; then
+    if [[ $client_reaped == false ]] && kill -0 "$observer_launcher" 2>/dev/null; then
         state=$(ps -p "$observer_launcher" -o stat= 2>/dev/null) || state=''
+        state=${state//[[:space:]]/}
     fi
-    if ! kill -0 "$observer_launcher" 2>/dev/null || [[ $state == Z* ]]; then
+    if [[ $client_reaped == true ]]; then
+        : # Actual exit status was already reaped before helper teardown.
+    elif ! kill -0 "$observer_launcher" 2>/dev/null || [[ $state == Z* ]]; then
         observer_test_result=0
         wait "$observer_launcher" 2>/dev/null || observer_test_result=$?
     else
@@ -149,6 +198,8 @@ launch_ui_prepare() {
     observer_product_supervisor=''
     observer_launcher_verifier=''
     observer_test_result=unavailable
+    observer_finalization_deadline=''
+    observer_finalization_result=0
     observer_cleanup_failed=false
     [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]] || return 0
     [[ ! -e $LAUNCH_UI_EVIDENCE_DIR ]] || return 1
@@ -237,6 +288,10 @@ launch_ui_prepare() {
 
 launch_ui_attach() {
     [[ ${observer_ready:-false} == true ]] || return 0
+    # Start once, before the unchanged thirty-iteration product loop. Natural
+    # client finalization may use its remainder plus the existing five-second
+    # shutdown grace, never a new or extended overall verification window.
+    observer_finalization_deadline=$(/usr/bin/perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.6f\n", clock_gettime(CLOCK_MONOTONIC) + 30 + 5') || return 1
     observer_product_supervisor=$1
     "${BASH_SOURCE[0]%/*}/observer-process-bridge.sh" "$observer_control" "$1" "$observer_id" "$$" \
         "$observer_launcher_verifier" \
@@ -285,7 +340,7 @@ launch_ui_finish() {
             :
         else normal_open_result=1; fi
     fi
-    if [[ $cleanup_result == 0 && $collection_result == 0 && $normal_open_result == 0 && ${observer_bridge_result:-0} == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
+    if [[ $cleanup_result == 0 && $collection_result == 0 && $normal_open_result == 0 && ${observer_finalization_result:-0} == 0 && ${observer_bridge_result:-0} == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
         launch_ui_status OBSERVED 'Telemetry recorded; original startup result remains authoritative.' "$1"
@@ -294,12 +349,12 @@ launch_ui_finish() {
         if [[ -f $LAUNCH_UI_EVIDENCE_DIR/status.json ]]; then
             cp "$LAUNCH_UI_EVIDENCE_DIR/status.json" "$LAUNCH_UI_EVIDENCE_DIR/preflight.json" || return 1
         fi
-        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result; bridge exit ${observer_bridge_result:-0}; Open evidence exit $normal_open_result; completion frame $completion_frame." "$1"
+        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result; bridge exit ${observer_bridge_result:-0}; Open evidence exit $normal_open_result; finalization exit ${observer_finalization_result:-0}; completion frame $completion_frame." "$1"
     fi
     # Consent is an authoritative controller, unlike optional read-only images.
     # Rejection/failed XCTest cannot qualify a product that later renders a PNG.
     if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true &&
-        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 || ${observer_bridge_result:-0} != 0 || $normal_open_result != 0 ) ]]; then
+        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 || ${observer_bridge_result:-0} != 0 || $normal_open_result != 0 || ${observer_finalization_result:-0} != 0 ) ]]; then
         return 1
     fi
     return "$cleanup_result"

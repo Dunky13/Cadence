@@ -691,6 +691,68 @@ parent-run product startups/PNGs remain established progress; safely finalized
 Open proof, complete native jobs, packaging and `ci-required` remain HOLD.
 A new exact-candidate XHigh pass is required before the existing-PR push.
 
+## Acknowledged test completion and bounded client finalization
+
+[Run 41136479212](https://github.com/Dunky13/Cadence/actions/runs/41136479212)
+on reviewed head `3a9ef16` still fails both native jobs and `ci-required`, with
+packaging skipped. The direct Sol 6.1 XHigh recheck approved that source after
+448 focused cases/states, 68 supplemental candidate cases and three parent cases;
+the internal-image P2 was reproduced on its parent and repaired. Source approval
+did not establish native finalization.
+
+ARM's current consumer archive SHA-256 matches GitHub metadata:
+`a1e3663b6c4554347baa2dfd1e88e978684b88a0e6d6f1bb5623de0a142c9d99`.
+The native product again launches, renders the expected inspected demo PNG and
+exits within the original startup loop. Final status is startup zero, test 143,
+cleanup zero, collection one, bridge zero, missing exported Open proof, and
+completion frame observed. This additional evidence distinguishes a test-body
+acknowledgment from the later client/result finalization that was forcibly killed.
+
+Intel fails earlier: all three existing Apple ticket-validation attempts lose
+the CloudKit connection, ending with error 68 before installation/observer/startup.
+No Intel consumer archive is produced on this run. This is a provider-read failure;
+it is not evidence of a current product or observer defect. The trust gate and
+its existing bounded retry policy are preserved. Prior-run Intel startup success
+does not satisfy this run's unperformed qualification.
+
+The parent previously waited five iterations after requesting stop, then signaled
+both owned helpers and xcodebuild regardless of its matching Done frame. An inert
+owned CLI/result-export regression reproduces ARM's exact pattern against that
+source: Done observed, client terminated with 143, collection one and no action
+proof. The correction keeps the five-iteration stop-acknowledgment window and
+allows an acknowledged ready client to finalize within the remainder of the
+original overall post-launch window: thirty product iterations plus the existing
+five-second shutdown grace. One monotonic deadline is stamped at launch attachment;
+it is not reset at Done or cleanup. The original 100-second client alarm remains
+unchanged. No timer value or maximum overall post-launch window is increased.
+
+The actual client exit is reaped before helper teardown and kept distinct from
+Done. Reaped clients are not signaled again; disappeared/zombie clients are handled
+without declaring a foreign live process owned. Forced teardown and ownership
+revalidation remain for unacknowledged, failed or over-budget clients. A finalization
+failure is latched separately from resource cleanup and rejects enabled qualification
+even if the client subsequently returns zero with otherwise valid exported proof.
+Done alone still cannot qualify a failed test, unsafe/missing export or action.
+
+Fourteen composed real-stop/finish/export contracts pass in both actual errexit
+modes, including successful delayed finalization, failed XCTest after Done, hung
+client, late zero after expiry, already-completed zero after expiry, foreign Done
+and natural success without Done.
+They use inert owned CLI clients/export files and a fixture clock edge; the real
+monotonic clock validates the original deadline, rejects expired/invalid/overlong
+budgets and cannot borrow an 80-second window. The test's own six/eight-second
+alarms are fixture safety bounds, not production increases. Five sequential runs
+pass all seventy scenarios. Lifecycle 95, export 25, startup cleanup 8/failure 30,
+workflow 110 and static checks also pass. The new contract is integrated into CI.
+
+Swift observer, Sandbox/build settings, product bytes and native launch loop are
+unchanged in this increment. The retained current QA proof at `3a9ef16` and full
+59-test/native-app CI at `09dbad1` remain separate; neither build nor the expensive
+suite was repeated for this Bash-only lifecycle repair. A fresh exact-candidate
+XHigh Standards/Spec review must challenge the lifetime/budget change before push.
+Native natural finalization, safe Open proof/export and both complete hosted jobs,
+packaging and `ci-required` remain HOLD until observed on the reviewed repaired head.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,

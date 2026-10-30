@@ -14,6 +14,7 @@ actionlint .github/workflows/*.yml
 ./scripts/tests/startup-cleanup-contracts.sh
 ./scripts/tests/startup-failure-contracts.sh
 ./scripts/tests/launch-ui-observer-contracts.sh
+./scripts/tests/observer-finalization-contracts.sh
 ./scripts/tests/observer-bootstrap-contracts.sh
 ./scripts/tests/observer-tree-contracts.sh
 ./scripts/tests/observer-stage-contracts.sh
