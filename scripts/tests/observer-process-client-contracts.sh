@@ -46,7 +46,8 @@ my $deadline = time + 4;
 while (time < $deadline) {
     my $line = <$log>;
     if (!defined $line) { seek($log, 0, 1); sleep 0.01; next; }
-    die "Unexpected query\n" unless $line =~ /^CadenceObserverQuery:([^:]+):([^:]+):([^:]+):(\d+)$/;
+    next if $line eq "\n";
+    die "Unexpected query\n" unless $line =~ /^CadenceObserverQuery:([^:]+):([^:]+):([^:]+):(\d+):EndCadenceObserver$/;
     my ($nonce, $id, $kind, $pid) = ($1, $2, $3, $4);
     if ($scenario eq 'stop') { open(my $stop, '>', "$control/stop") or die; close $stop; exit; }
     my $reply = {schema=>'cadence/process-query/v1',observationID=>$nonce,requestID=>$id,kind=>$kind,pid=>0+$pid,ok=>JSON::PP::true,output=>"owned command\n"};

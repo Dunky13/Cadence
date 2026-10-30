@@ -85,9 +85,43 @@ and any query child after XCTest teardown. Broker failures hold enabled consent
 qualification even when product startup has already produced a valid PNG.
 The sandbox and original thirty-second product timeout remain unchanged.
 
+## Proven forwarding failure and framing repair
+
+At `a8b007c`, [arm64 job 124179508537](https://github.com/Dunky13/Cadence/actions/runs/41089540851/job/124179508537)
+reaches readiness, then reports ProcessQueryUnavailable without attempting Open.
+Teardown, attachment collection and broker exit are all zero. The encrypted
+archive digest and decoded client fingerprint match: 14089 bytes, SHA-256
+`855d73c1e4a8e568ea05bfc79787855b5bd2a07d143caf32029dcc818714e2c3`.
+The first query is present inside a partial XCTest logging line, immediately
+after its timestamp/runner prefix. The broker's strict line-start matcher
+therefore ignores the valid request, and the native client times out.
+
+A synthetic replay of that prefix fails against the old broker and passes after
+the repair. Ready, Done and Query now carry an explicit end marker and a leading
+newline. The broker resynchronizes on complete start/end frames across reads;
+readiness/completion look for the exact nonce-bound complete frame independently
+of surrounding logging text. Foreign or malformed fields, unknown query kinds,
+replayed requests and existing bounds still fail. Only transport framing changes;
+metadata and consent authority are unchanged.
+
+Focused final checks pass: 23 broker contracts, 12 exact-production Swift client
+contracts, 24 attachment/signal contracts and 74 lifecycle contracts, plus the
+existing first-open, stage and export checks. QA build-for-testing preserves the
+sandbox. Both independent Standards and Spec reviews report no remaining
+source-supported findings against `a8b007c`; reviewed broker SHA-256 is
+`613fcfd02f522b9a683c5be5e14c5cb9e963396ec057279479eac57258d0ac99`.
+Hosted repaired-frame startup remains required.
+
+Intel in the same run failed earlier: copied-app ticket validation exhausted
+three exact CloudKit connection-loss retries and exited 68 before the controller
+started. A targeted rerun was rejected while the run was unfinished. This
+provider failure is separate from the arm64 framing defect and cannot establish
+broker/runtime acceptance. A changed repaired head will receive both native jobs.
+
 ## Validation and review
 
-The full local scripts/ci.sh passes on arm64/macOS 27/Xcode 27.1, including 59
+At `a8b007c`, the full local scripts/ci.sh passed on arm64/macOS 27/Xcode 27.1,
+including 59
 Swift tests with real launchd integration, native app build, workflow/static
 checks, and all signing/recovery/publication contracts. Focused final checks
 pass: 24 inert Open-controller cases, 24 attachment/signal cases, 17 exporter
@@ -103,7 +137,7 @@ regression and independent rerun verify that only requested TERM cancels and
 reaps cleanly; faults and other signals remain failures. Both re-reviews report
 no remaining source-supported findings for broker SHA-256
 `b1ce81d6451b4e7e7c94b085216fcce134bf5b1804862b9e77a875b13e41a640`.
-The full local `scripts/ci.sh` also passes for this increment, including the
+The full local `scripts/ci.sh` passed for that broker increment, including the
 sandbox-preserving QA compile, 59 Swift tests with launchd integration, native
 build and all release contracts. Its initial broker matrix had 16 cases; the
 final 17-case targeted rerun includes the repaired cancellation and unexpected
@@ -122,8 +156,8 @@ increment and its separate reviews are recorded above.
 ## Remaining gates and cleanup
 
 The output-transport repair is verified by readiness on both architectures in
-run 41083249075. The later process-query denial still blocks Open and startup.
-The parent-owned process broker requires hosted verification. The previously
+run 41083249075. The subsequent hosted process query was hidden by logging interleaving.
+The new framing repair requires hosted verification of broker replies and startup. The previously
 approved encrypted capture remains active with the same protected one-time key
 until that repair is verified; remove it before final acceptance.
 

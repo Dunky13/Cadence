@@ -28,9 +28,10 @@ case $FIXTURE_CASE in
     session-fail) exit 71 ;;
     protocol-missing) printf 'Missing private observer protocol paths: FAKE_SECRET=private\n'; exit 65 ;;
     never-ready) while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 72 ;;
-    wrong-ready) printf 'CadenceObserverReady:wrong-token\n'; while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 73 ;;
+    wrong-ready) printf 'CadenceObserverReady:wrong-token:EndCadenceObserver\n'; while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 73 ;;
 esac
-printf 'CadenceObserverReady:%s\n' "$nonce"
+if [[ $FIXTURE_CASE == prefixed-ready ]]; then printf '2026-10-30 16:30:47.504156+0000 LaunchUIObserverTests-Runner'; fi
+printf 'CadenceObserverReady:%s:EndCadenceObserver\n' "$nonce"
 while [[ ! -e $control/launch.json && ! -e $control/stop ]]; do /bin/sleep 0.01; done
 if [[ $FIXTURE_CASE == hung-session ]]; then
     trap '' TERM
@@ -46,7 +47,7 @@ if [[ $FIXTURE_CASE == permission-request ]]; then
     exit 74
 fi
 printf 'Observed: SYNTHETIC only\n' > "$result/export/session.txt"
-printf 'CadenceObserverDone:%s\n' "$nonce"
+printf 'CadenceObserverDone:%s:EndCadenceObserver\n' "$nonce"
 STUB
 chmod +x "$work/bin/xcodebuild"
 cat > "$work/bin/xcrun" <<'STUB'
@@ -114,14 +115,14 @@ else [[ $finish_result == 0 ]]; fi
 if [[ $FIXTURE_CASE == disabled ]]; then [[ ! -d $FIXTURE/evidence ]]; exit; fi
 jq -e --arg mode "${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false}" '.original_startup_exit == "42" and .runtime_acceptance == false and .read_only == ($mode != "true")' "$FIXTURE/evidence/status.json" >/dev/null
 case $FIXTURE_CASE in
-    success|diagnostic-output-fail|diagnostic-missing-reader)
+    success|prefixed-ready|diagnostic-output-fail|diagnostic-missing-reader)
         jq -e '.status == "OBSERVED"' "$FIXTURE/evidence/status.json" >/dev/null
         jq -e '.bundleID == "dev.cadence.app" and .build == "15" and .observationID != ""' "$FIXTURE/evidence/binding.json" >/dev/null
         jq -e '.launcherPID == 900' "$observer_control/launch.json" >/dev/null ;;
     *) jq -e '.status == "HOLD"' "$FIXTURE/evidence/status.json" >/dev/null ;;
 esac
 case $FIXTURE_CASE in
-    success|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable|collector-failure|collector-failure-enabled)
+    success|prefixed-ready|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable|collector-failure|collector-failure-enabled)
         grep -q '^session$' "$FIXTURE/calls"
         # Only private fixture/runner executable paths can be signaled.
         ! grep -Eq '1103|1104' "$FIXTURE/signals" ;;
@@ -130,7 +131,7 @@ esac
 # Verified teardown retains the actual reaped test exit and cannot qualify the
 # product. Missing/failing diagnostics never change original result or status.
 case $FIXTURE_CASE in
-    success|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|collector-failure|collector-failure-enabled)
+    success|prefixed-ready|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|collector-failure|collector-failure-enabled)
         jq -e --argjson code "$observer_test_result" '.client_exit == $code and .status == "HOLD" and .cause == "UNKNOWN" and
             .runtime_acceptance == false and .authority_established == false and .causality_established == false' \
             "$FIXTURE/evidence/bootstrap.json" >/dev/null ;;
@@ -145,7 +146,7 @@ if [[ $FIXTURE_CASE == protocol-missing ]]; then
 fi
 DRIVER
 cases=0
-for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled success; do
+for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled prefixed-ready success; do
     fixture="$work/$scenario"
     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/build/Build/Products"
     : > "$fixture/calls"

@@ -59,6 +59,6 @@ try Harness().run()
 SWIFT
 swiftc "$work/attachments.swift" -o "$work/attachments"
 "$work/attachments" > "$work/result"
-grep -qx 'CadenceObserverReady:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA' "$work/result"
-grep -qx 'CadenceObserverDone:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA' "$work/result"
+grep -qx 'CadenceObserverReady:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA:EndCadenceObserver' "$work/result"
+grep -qx 'CadenceObserverDone:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA:EndCadenceObserver' "$work/result"
 tail -1 "$work/result"

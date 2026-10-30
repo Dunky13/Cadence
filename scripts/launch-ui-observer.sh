@@ -185,12 +185,12 @@ launch_ui_prepare() {
         > "$observer_control/xcode-private.log" 2>&1 &
     observer_launcher=$!
     for ((observer_wait=0; observer_wait<35; observer_wait++)); do
-        if grep -qxF "CadenceObserverReady:$observer_id" "$observer_control/xcode-private.log"; then
+        if grep -qF "CadenceObserverReady:$observer_id:EndCadenceObserver" "$observer_control/xcode-private.log"; then
             observer_ready=true
             launch_ui_status READY 'Read-only XCTest session initialized before ordinary LaunchServices invocation.'
             return 0
         fi
-        if grep -qxF "CadenceObserverDone:$observer_id" "$observer_control/xcode-private.log"; then break; fi
+        if grep -qF "CadenceObserverDone:$observer_id:EndCadenceObserver" "$observer_control/xcode-private.log"; then break; fi
         kill -0 "$observer_launcher" 2>/dev/null || break
         sleep 1
     done

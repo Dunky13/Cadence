@@ -135,10 +135,17 @@ while (-d $control && !-e "$control/stop" && kill(0, $parent)) {
     $bytes += $read;
     die "Bridge log limit exceeded\n" if $bytes > 1048576;
     $buffer .= $chunk;
-    while ($buffer =~ s/^(.*)\n//) {
-        my $line = $1;
-        next unless $line =~ /^CadenceObserverQuery:/;
-        die "Invalid bridge request\n" unless $line =~ /^CadenceObserverQuery:\Q$nonce\E:([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}):(processes|command|state|executable):([0-9]{1,10})$/;
+    # XCTest may forward a stdout write inside a partially written logging line.
+    # Resynchronize on explicit frame boundaries, including across read chunks.
+    while (1) {
+        my $start = index($buffer, 'CadenceObserverQuery:');
+        last if $start < 0;
+        $buffer = substr($buffer, $start);
+        my $end_marker = ':EndCadenceObserver';
+        my $end = index($buffer, $end_marker);
+        last if $end < 0;
+        my $line = substr($buffer, 0, $end + length($end_marker), '');
+        die "Invalid bridge request\n" unless $line =~ /^CadenceObserverQuery:\Q$nonce\E:([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}):(processes|command|state|executable):([0-9]{1,10}):EndCadenceObserver$/;
         my ($id, $kind, $pid) = ($1, $2, $3);
         die "Duplicate bridge request\n" if $handled{$id}++;
         die "Bridge request limit exceeded\n" if ++$requests > 256;

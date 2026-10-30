@@ -116,7 +116,7 @@ final class ObserverTests: XCTestCase {
         guard ["Ready", "Done"].contains(kind), UUID(uuidString: id) != nil else {
             throw NSError(domain: "InvalidObserverSignalHOLD", code: 1)
         }
-        try FileHandle.standardOutput.write(contentsOf: Data("CadenceObserver\(kind):\(id)\n".utf8))
+        try FileHandle.standardOutput.write(contentsOf: Data("\nCadenceObserver\(kind):\(id):EndCadenceObserver\n".utf8))
     }
 
     private func recordBootstrapStage(_ stage: BootstrapStage) {
@@ -167,7 +167,7 @@ final class ObserverTests: XCTestCase {
             kind = query; pid = value
         } else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
         let requestID = UUID().uuidString
-        let marker = "CadenceObserverQuery:\(observationID):\(requestID):\(kind):\(pid)\n"
+        let marker = "\nCadenceObserverQuery:\(observationID):\(requestID):\(kind):\(pid):EndCadenceObserver\n"
         try FileHandle.standardOutput.write(contentsOf: Data(marker.utf8))
         let replyURL = control.appendingPathComponent("reply-\(requestID).json")
         let deadline = ProcessInfo.processInfo.systemUptime + 2
