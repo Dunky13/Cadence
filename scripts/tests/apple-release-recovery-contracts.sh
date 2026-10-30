@@ -9,6 +9,17 @@ mkdir -p "$work/bin" "$work/repo/scripts" "$work/repo/Resources" "$work/provider
 for script in validate-apple-ticket.sh release-source-context.sh release-macos.sh notarize-artifact.sh apple-stage-state.sh verify-apple-distribution.sh verify-apple-dmg-binding.sh package-dmg.sh check-dmg.sh verify-demo-startup.sh launch-ui-observer.sh capture-startup-failure.sh capture-observer-bootstrap.sh collect-observer-evidence.sh observer-process-bridge.sh; do
     cp "$root/scripts/$script" "$work/repo/scripts/"
 done
+# Substitute the pinned system launcher only in this disposable provider fixture.
+/usr/bin/perl - "$work/repo/scripts/verify-demo-startup.sh" > "$work/repo/scripts/verify-demo-startup.pending" <<'PERL'
+open(my $source, '<', $ARGV[0]) or die;
+my $text = do { local $/; <$source> };
+my $count = ($text =~ s{^/usr/bin/open (?=-n -W )}{q{"$FIXTURE_OPEN" }}gme);
+die "Expected one explicit system LaunchServices boundary\n" unless $count == 1;
+print $text;
+PERL
+mv "$work/repo/scripts/verify-demo-startup.pending" "$work/repo/scripts/verify-demo-startup.sh"
+chmod +x "$work/repo/scripts/verify-demo-startup.sh"
+export FIXTURE_OPEN="$work/bin/open"
 printf '{"CFBundleShortVersionString":"1.2.3","CFBundleVersion":"42"}\n' > "$work/repo/Resources/Info.plist"
 printf 'Install fixture\n' > "$work/repo/Resources/Install.txt"
 cat > "$work/bin/fake-tool" <<'STUB'

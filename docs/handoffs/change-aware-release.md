@@ -118,6 +118,40 @@ started. A targeted rerun was rejected while the run was unfinished. This
 provider failure is separate from the arm64 framing defect and cannot establish
 broker/runtime acceptance. A changed repaired head will receive both native jobs.
 
+## Proven launcher mismatch and explicit system path
+
+At `4b4a005`, [arm64 job 124187086910](https://github.com/Dunky13/Cadence/actions/runs/41091739312/job/124187086910)
+verifies the framing repair: process enumeration, owned product command/state
+queries and observation attachment collection succeed. The owned translocated
+Cadence process is stopped with the exact snapshot arguments. Open remains
+unattempted because the next query, for the ordinary launcher, is rejected.
+The verified encrypted client is 27181 bytes, SHA-256
+`9825d2da86797a8a2ea838874b541ff856f99374bd623db221a144302aeef66b`.
+Its archive digest and bootstrap fingerprint match. The retained failure
+report identifies launcher command `open`; the broker requires `/usr/bin/open`.
+The harness had invoked the bare PATH command.
+
+A local read-only probe with two owned short-lived sleep processes confirms
+that macOS ps comm reports a bare invocation as sleep and an absolute invocation
+as /bin/sleep. Both children were reaped; no UI or product was launched. The
+production harness now pins `/usr/bin/open`, aligning argv[0] and the executable
+with the existing exact launcher checks. Flags, app/snapshot arguments,
+LaunchServices behavior and the thirty-second deadline are unchanged. No
+identity check is relaxed.
+
+The complete-launch and release-recovery fixtures require exactly one explicit
+system launch boundary, then substitute it only inside disposable copies with
+a quoted inert fixture path. No production environment override is introduced.
+The old source fails that regression; the repaired lifecycle tests cover valid
+PNG, launcher failure and unchanged timeout behavior without opening the real
+app. Final targeted checks pass: 8 cleanup, 30 failure-capture, 74 lifecycle,
+23 broker, 24 first-open and 20 release-recovery cases. ShellCheck, Bash syntax,
+actionlint and whitespace checks pass. Both independent Standards and Spec reviews report no remaining findings for
+launcher SHA-256
+`fff98212a730d843f017b0c6137bd54effbdacc9cf6737db5fb0b42b300edf53`.
+Actual repaired-head launcher validation, normal Open and startup remain hosted
+gates. The QA source is unchanged from the last successful compile.
+
 ## Validation and review
 
 At `a8b007c`, the full local scripts/ci.sh passed on arm64/macOS 27/Xcode 27.1,
@@ -156,8 +190,9 @@ increment and its separate reviews are recorded above.
 ## Remaining gates and cleanup
 
 The output-transport repair is verified by readiness on both architectures in
-run 41083249075. The subsequent hosted process query was hidden by logging interleaving.
-The new framing repair requires hosted verification of broker replies and startup. The previously
+run 41083249075. The framing repair is verified by hosted broker replies and an owned-process
+observation in run 41091739312. Its later launcher basename mismatch is repaired
+by the explicit system path; hosted launcher checks and startup remain required. The previously
 approved encrypted capture remains active with the same protected one-time key
 until that repair is verified; remove it before final acceptance.
 

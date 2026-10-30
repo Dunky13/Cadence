@@ -302,15 +302,25 @@ cat > "$work/bin/ps" <<'STUB'
 exit 0
 STUB
 chmod +x "$work/bin/open" "$work/bin/spctl" "$work/bin/sips" "$work/bin/sleep" "$work/bin/ps"
+# Copy only the external launch boundary; production still pins /usr/bin/open.
+mkdir "$work/launcher"
+cp "$root/scripts/launch-ui-observer.sh" "$work/launcher/launch-ui-observer.sh"
+/usr/bin/perl - "$root/scripts/verify-demo-startup.sh" > "$work/launcher/verify-demo-startup.sh" <<'PERL'
+open(my $source, '<', $ARGV[0]) or die;
+my $text = do { local $/; <$source> };
+my $count = ($text =~ s{^/usr/bin/open (?=-n -W )}{q{"$FIXTURE_OPEN" }}gme);
+die "Expected one explicit system LaunchServices boundary\n" unless $count == 1;
+print $text;
+PERL
 for product_result in 0 7 1; do
     fixture="$work/complete-launch-$product_result"
     mkdir -p "$fixture/Cadence.app"
     : > "$fixture/calls"
     : > "$fixture/timer"
     result=0
-    PATH="$work/bin:$PATH" FIXTURE="$fixture" FIXTURE_PRODUCT_RESULT="$product_result" \
-        LAUNCH_UI_EVIDENCE_DIR='' INSTALL_EVIDENCE_DIR='' \
-        /bin/bash "$root/scripts/verify-demo-startup.sh" "$fixture/Cadence.app" > "$fixture/result.log" 2>&1 || result=$?
+    PATH="$work/bin:$PATH" FIXTURE_OPEN="$work/bin/open" FIXTURE="$fixture" FIXTURE_PRODUCT_RESULT="$product_result" \
+        LAUNCH_UI_ALLOW_NORMAL_OPEN=false LAUNCH_UI_EVIDENCE_DIR='' INSTALL_EVIDENCE_DIR='' \
+        /bin/bash "$work/launcher/verify-demo-startup.sh" "$fixture/Cadence.app" > "$fixture/result.log" 2>&1 || result=$?
     [[ $result == "$product_result" && $(grep -c '^ordinary-launch$' "$fixture/calls") == 1 ]] || {
         printf 'Complete synthetic launch expected %s, got %s.\n' "$product_result" "$result" >&2
         cat "$fixture/result.log" >&2; exit 1;

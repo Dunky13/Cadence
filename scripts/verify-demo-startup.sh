@@ -62,7 +62,8 @@ if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true && ${observer_ready:-false} 
     printf 'Verified first-open controller did not establish readiness.\n' >&2
     exit 1
 fi
-open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
+# Pin argv[0] as well as the executable used by the exact launcher checks.
+/usr/bin/open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
 launcher=$!
 diagnostic_launcher=$launcher
 launch_ui_attach "$launcher" || printf 'UI observer launch binding unavailable; original launch result preserved.\n' >&2
