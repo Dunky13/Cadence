@@ -45,6 +45,23 @@ re-reviews accepted the repair at source tree
 
 ## Validation and remaining gates
 
+The user approved temporary encrypted credential-free XCTest client-log capture
+after both architectures again exited 65 without any session-stage output in
+run 41072839914. Temporary wiring is restricted to `macOS CI` pull-request jobs,
+after verified observer teardown and client reaping. It rejects unsafe or
+oversize inputs, reads at most 1 MiB, encrypts through OpenSSL CMS to a one-time
+public certificate and uploads ciphertext only in a separate one-day artifact.
+The private key stays protected outside version control. No plaintext log,
+environment or test-plan upload is authorized. The helper, public certificate,
+flag and uploader must be removed after diagnosis and repair; delete the
+temporary ciphertext/key after required evidence closure.
+The encryption round trip and ten negative/gating cases pass locally, along
+with all 55 observer lifecycle/cleanup contracts, ShellCheck and actionlint.
+Independent Standards and Spec reviews of tree
+`f2f2a7e80fdc0e7764219cd54038e521e0f4c077` report no actionable findings. These
+checks do not establish the actual hosted error; the next PR run must retain
+the encrypted client log for local diagnosis.
+
 PR #11's initial hosted run 41071030513 failed: arm64 passed trust gates but
 XCTest still exited 65 before readiness; Intel exhausted the existing bounded
 retries after repeated Apple CloudKit connection losses. The arm64 bootstrap
