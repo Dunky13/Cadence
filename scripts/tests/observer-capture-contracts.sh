@@ -96,6 +96,8 @@ cat >> "$work/capture.swift" <<'SWIFT'
     }
     private func isolatedWindowImage(_ owner: Owner, _ element: XCUIElement, _ tree: Node) async throws -> (UInt32, Data)? {
         imageQueries += 1
+        if scenario == "helper-cancelled" { throw ObserverCancellation.stopped }
+        if scenario == "image-error" { throw NSError(domain: "SyntheticImageUnavailable", code: 1) }
         if scenario == "stop-during-image" { requestedStop = true }
         if scenario == "capture-unavailable" { return nil }
         return (UInt32(owner.pid), Data("INERT-IMAGE-NOT-PNG".utf8))
@@ -109,8 +111,8 @@ cat >> "$work/capture.swift" <<'SWIFT'
     func run() async throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "SYNTHETIC0", version: "0.2.0", build: "15", executableSHA256: "synthetic", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "synthetic-unique")
         let failures = ["enumeration-failure", "argument-failure", "state-failure", "empty-command", "empty-state", "system-query-failure", "truncated", "authority"]
-        let partial = ["too-many-owners", "too-many-windows", "missing-owner", "query-throws", "capture-unavailable", "editable-window", "changed-owner", "changed-owner-after-capture"]
-        let cancelled = ["stop-before", "stop-after-discovery", "stop-empty-discovery", "stop-during-owner", "stop-during-surfaces", "stop-during-snapshot", "stop-during-image"]
+        let partial = ["too-many-owners", "too-many-windows", "missing-owner", "query-throws", "capture-unavailable", "image-error", "editable-window", "changed-owner", "changed-owner-after-capture"]
+        let cancelled = ["stop-before", "stop-after-discovery", "stop-empty-discovery", "stop-during-owner", "stop-during-surfaces", "stop-during-snapshot", "stop-during-image", "helper-cancelled"]
         var cases = 0
         for name in ["baseline", "dialog-surface", "verified-absence"] + partial + failures + cancelled {
             scenario = name
@@ -129,9 +131,9 @@ cat >> "$work/capture.swift" <<'SWIFT'
                 print("\(name): complete=\(result.complete) observed=\(progress.observed)")
             } catch ObserverCancellation.stopped {
                 precondition(cancelled.contains(name) && snapshotQueries <= 1, "Cancellation began later UI work")
-                precondition(surfaceQueries == (["stop-during-surfaces", "stop-during-snapshot", "stop-during-image"].contains(name) ? 1 : 0))
-                precondition(snapshotQueries == (["stop-during-snapshot", "stop-during-image"].contains(name) ? 1 : 0))
-                precondition(imageQueries == (name == "stop-during-image" ? 1 : 0))
+                precondition(surfaceQueries == (["stop-during-surfaces", "stop-during-snapshot", "stop-during-image", "helper-cancelled"].contains(name) ? 1 : 0))
+                precondition(snapshotQueries == (["stop-during-snapshot", "stop-during-image", "helper-cancelled"].contains(name) ? 1 : 0))
+                precondition(imageQueries == (["stop-during-image", "helper-cancelled"].contains(name) ? 1 : 0))
                 precondition(!FileManager.default.fileExists(atPath: evidence.appendingPathComponent("observation-\(cases).json").path), "Cancelled capture published an observation")
             } catch {
                 precondition(failures.contains(name), "Unexpected inert failure")

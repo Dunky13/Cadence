@@ -446,9 +446,13 @@ final class ObserverTests: XCTestCase {
     private func isolatedWindowImage(_ owner: Owner, _ element: XCUIElement, _ tree: Node) async throws -> (UInt32, Data)? {
         // Never request screen-recording permission. XCTest element screenshots
         // crop the desktop and may include an overlapping editable window.
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         guard CGPreflightScreenCaptureAccess() else { return nil }
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         let frame = element.frame
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         let identities = content.windows.compactMap { window -> WindowIdentity? in
             guard let pid = window.owningApplication?.processID else { return nil }
             return WindowIdentity(id: window.windowID, pid: pid, frame: window.frame)
@@ -461,9 +465,12 @@ final class ObserverTests: XCTestCase {
         config.width = max(1, Int(frame.width.rounded(.up)))
         config.height = max(1, Int(frame.height.rounded(.up)))
         config.showsCursor = false
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         var budget = 1024
         let after = safeTree(try element.snapshot(), budget: &budget)
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         guard after == tree, !after.truncated, !editableContent(after), !permissionRequest(after),
               NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable,
               let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
@@ -508,7 +515,9 @@ final class ObserverTests: XCTestCase {
                     var isolated: (UInt32, Data)?
                     if !tree.truncated && !editableContent(tree) {
                         guard !stopRequested else { throw ObserverCancellation.stopped }
-                        isolated = try? await isolatedWindowImage(owner, element, tree)
+                        do { isolated = try await isolatedWindowImage(owner, element, tree) }
+                        catch ObserverCancellation.stopped { throw ObserverCancellation.stopped }
+                        catch { isolated = nil }
                     }
                     guard !stopRequested else { throw ObserverCancellation.stopped }
                     let name = isolated == nil ? "" : "system-\(index)-\(owner.pid)-\(number).png"

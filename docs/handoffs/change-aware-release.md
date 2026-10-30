@@ -626,10 +626,9 @@ checks between those queries. The new exact-production loop regression reproduce
 that unnecessary post-Open sampling against the parent. The controlled first-open
 path now completes sampling after successful Open record retention. Read-only
 mode and an unfinished confirmation retain all three original samples. Controller
-or record errors still propagate as failures. Stop checks before and after owner,
-surface, snapshot and image work prevent subsequent queries on cancellation;
-the cancellation exception is rethrown rather than classified as an unavailable
-owner.
+or record errors still propagate as failures. Initial outer stop checks covered owner, surface, snapshot and image-call
+boundaries. The internal-await cancellation gap found in independent review and
+its repair are recorded below; the initial guards alone were incomplete.
 
 Enabled first-open qualification now explicitly requires the safely exported
 regular, non-symlink `first-open.json` with exactly the verified action and the
@@ -656,6 +655,41 @@ full `09dbad1` repair evidence remains separate. A fresh sandbox-preserving QA
 compile and static checks pass. A fresh exact-candidate XHigh review is required
 before push. Hosted finalized action/export proof, both complete native jobs,
 universal packaging and `ci-required` remain HOLD.
+
+## XHigh internal image-cancellation finding and repair
+
+The direct Sol 6.1 XHigh review of `1ecb86e` found no separate Standards issue,
+but withheld Spec/source approval for one P2. The image caller's stop check ran
+after the whole awaited helper returned. Stop during shareable-content discovery
+still allowed frame/image capture, and stop during screenshot capture still
+allowed a new snapshot query. The candidate was held locally and never pushed.
+The reviewer independently passed 515 cases/states and 34 supplemental proof/
+export cases, but those passes did not cover or excuse the helper gap.
+
+The helper now checks stop internally at entry, before discovery, after each
+await and before subsequent frame/image/snapshot work. The capture caller
+explicitly rethrows typed observer cancellation instead of treating it as an
+optional image error. Ordinary unavailable-image errors retain their existing
+optional behavior. No permission request, screen-capture authorization change,
+new acceptance route or deadline increase is introduced.
+
+A new inert contract extracts the exact production isolated-image and window-ID
+helpers, rather than replacing the image helper with one stub. It reproduces
+both reported parent paths and five additional cancellation boundaries. All
+15 cases pass after repair: seven cancellation paths issue no later work,
+baseline encoding still succeeds, and absent existing permission, ambiguous or
+mismatched windows, changed tree/owner and editable/authority content remain
+refused. No native image/capture API or UI is invoked. The fixture has its own
+eight-second safety alarm and is integrated into CI. Outer capture cases now
+pass 31, including typed helper cancellation propagation and ordinary image-error
+handling. Session 11, first-open 63 and filtering/privacy 71 cases pass; static
+checks and a fresh sandbox-preserving QA build pass on the repair.
+
+This fixes the source-supported P2. It does not establish the operation killed
+in hosted run 41130939129 or native finalization on the next candidate. Both
+parent-run product startups/PNGs remain established progress; safely finalized
+Open proof, complete native jobs, packaging and `ci-required` remain HOLD.
+A new exact-candidate XHigh pass is required before the existing-PR push.
 
 ## Remaining gates and cleanup
 
