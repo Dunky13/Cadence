@@ -183,6 +183,10 @@ launch_ui_finish() {
         "${BASH_SOURCE[0]%/*}/collect-observer-evidence.sh" "$observer_control/result.xcresult" "$LAUNCH_UI_EVIDENCE_DIR" "${observer_id:-}" || collection_result=1
         "$bootstrap_script" "$observer_control/xcode-private.log" "${observer_plan:-}" "$observer_test_result" ||
             printf 'Bootstrap diagnostic unavailable; original launch and observer results preserved.\n' >&2
+        if [[ ${LAUNCH_UI_ENCRYPT_CLIENT_LOG:-false} == true ]]; then
+            "${BASH_SOURCE[0]%/*}/seal-observer-client-log.sh" "$observer_control/xcode-private.log" "$LAUNCH_UI_EVIDENCE_DIR" ||
+                printf 'Encrypted client diagnostic unavailable; original results preserved.\n' >&2
+        fi
     else
         printf 'Bootstrap diagnostic unavailable: no verified reaped client; original results preserved.\n' >&2
     fi

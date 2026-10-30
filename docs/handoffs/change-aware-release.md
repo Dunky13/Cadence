@@ -83,6 +83,16 @@ updated evidence and structure.
 
 ## Remaining gates and cleanup
 
+At repaired source `ab9cc32`, hosted Intel run 41081797998 proves readiness,
+stage `ready`, verified teardown and safe attachment collection. It then fails
+during observation with no Open attempted and no observation record. Arm64 was
+blocked earlier by Apple CloudKit connection losses exhausting the existing
+bounded ticket-validation retries. The sandbox output repair is verified on
+Intel; actual normal-Open matching and startup are still held. The previously
+approved encrypted capture is temporarily restored unchanged, with the same
+protected one-time key, to identify this later observation failure. Remove it
+again after that diagnosis and repair.
+
 Repaired-head hosted arm64 and Intel readiness, actual dialog matching, native
 startup and finalized result/attachment export remain required. Missing UI
 images are optional telemetry; unknown dialogs, controller failure and enabled
@@ -91,11 +101,12 @@ in this same PR without weakening the gate. ci-required correctly fails when
 native checks fail and packaging is skipped.
 
 The temporary encrypted-log helper, public certificate, CI flag and uploader
-are removed from the repaired source. The protected one-time key, private logs
-and two task-owned encrypted remote artifacts remain only until repair/evidence
-closure, then must be deleted. Keep safe fingerprints and sanitized failure
-summaries. Local temporary builds/test scratch must also be removed before final
-handoff; ignored validation logs and the standalone offline HTML remain local.
+are currently restored for the later observation diagnosis and must be removed
+before final acceptance. The protected one-time key, private logs and task-owned
+encrypted remote artifacts remain only until repair/evidence closure, then must
+be deleted. Keep safe fingerprints and sanitized failure summaries. Local
+temporary builds/test scratch must also be removed before final handoff;
+ignored validation logs and the standalone offline HTML remain local.
 
 No merge, Apple submission, public release or deployment was performed. The
 schedule change is not live until the PR is merged. The authorized implementation
