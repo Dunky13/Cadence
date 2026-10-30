@@ -42,6 +42,7 @@ struct XCUIElement {
                     if scenario == "native-extra-button" { children.append(XCUIElementSnapshot(elementType: .button, label: "Open Anyway", title: "", children: [])) }
                 }
                 if type == .image {
+                    if scenario == "native-image-missing-label" { label = "" }
                     if scenario == "native-image-label" || (scenario == "native-image-label-changed" && snapshots > 1) { label = "Unexpected image label" }
                     if scenario == "native-image-title" { title = "authentication required" }
                     if scenario == "native-image-title-changed" && snapshots > 1 { title = "Changed image title" }
@@ -125,8 +126,8 @@ cat >> "$work/controller.swift" <<'SWIFT'
     private func expectedDownloadNotice(_ app: URL) -> String? {
         noticeReads += 1
         if scenario == "native-missing-metadata" || (scenario == "native-changed-metadata" && noticeReads > 1) { return nil }
-        if scenario == "native-wrong-time" { return "CadenceReleaseVerification downloaded this file today at 7:31 PM. Apple checked it for malicious software and none was detected." }
-        return "CadenceReleaseVerification downloaded this file today at 7:32 PM. Apple checked it for malicious software and none was detected."
+        if scenario == "native-wrong-time" { return "CadenceReleaseVerification downloaded this file today at 8:39 PM. Apple checked it for malicious software and none was detected." }
+        return "CadenceReleaseVerification downloaded this file today at 8:40 PM. Apple checked it for malicious software and none was detected."
     }
     private func validCandidate(_ app: URL, _ binding: Binding) -> Bool { scenario != "wrong-candidate" }
     private func ownedProcesses(_ binding: Binding) throws -> [OwnedProcess] {
@@ -156,7 +157,7 @@ cat >> "$work/controller.swift" <<'SWIFT'
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
         let accepted = ["native-profile", "value-only-text", "normal", "dialog-surface", "alert-surface", "sheet-surface"]
-        let rejected = ["native-image-label", "native-image-title", "native-image-label-changed", "native-image-title-changed", "native-missing-metadata", "native-wrong-time", "native-changed-metadata", "native-extra-query-button", "native-duplicate-open", "native-disabled-open", "native-changed-tree", "native-unknown-root", "native-root-title", "native-extra-button", "native-warning", "native-other-agent", "changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
+        let rejected = ["native-image-missing-label", "native-image-label", "native-image-title", "native-image-label-changed", "native-image-title-changed", "native-missing-metadata", "native-wrong-time", "native-changed-metadata", "native-extra-query-button", "native-duplicate-open", "native-disabled-open", "native-changed-tree", "native-unknown-root", "native-root-title", "native-extra-button", "native-warning", "native-other-agent", "changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
         let noAction = ["missing-surface", "disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
         for name in accepted + rejected + noAction {
             scenario = name; noticeReads = 0; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false

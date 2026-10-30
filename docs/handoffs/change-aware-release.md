@@ -429,7 +429,7 @@ A sanitized [native tree fixture](../../scripts/tests/fixtures/NativeFirstOpen.j
 contains only the observed role/text/control structure, without process IDs,
 user paths or pixels. The old production controller rejects that fixture;
 the new controller accepts it only with matching trusted quarantine context.
-It adds one closed profile: Dialog root `alert` with no title, one empty image,
+The initial profile used a Dialog root `alert` with no title, one empty image,
 two immutable static-text leaves, then exactly Help, Cancel and Open leaves
 with their observed label/title placement. Every leaf must be complete and
 childless. The question must match the existing Cadence/Cadence.app prompts.
@@ -492,7 +492,45 @@ preserving QA build. Controller cases cover all three reported failures and
 the symmetric changed-title case. Generic image redaction, no image-value
 reads, authority detection and text truncation also have raw-snapshot coverage.
 The full expensive suite was not repeated after this narrow repair; its
-`23946da` evidence remains separate. A fresh XHigh review is required before push.
+`23946da` evidence remains separate. The direct Sol 6.1 XHigh recheck of
+`29a5d7f` found no remaining Standards or Spec source findings. It independently
+reproduced all four unsafe parent cases and verified zero clicks after repair,
+then reran the focused contracts. That reviewed, signed candidate was pushed.
+
+## Enforced native image label
+
+[Run 41124885712](https://github.com/Dunky13/Cadence/actions/runs/41124885712)
+on `29a5d7f` still fails both native jobs and `ci-required`; packaging is skipped.
+Both consumer archives match their GitHub metadata SHA-256 values:
+
+- arm64: `5cc2196bc5bf5da9eba654e343dd9a0983f678338d5c810274e335223c9afd82`.
+- Intel: `eb787187b626d1bb93f47ed44d9181ecc7b6e3c578af71ea0fc73269ca00f39f`.
+
+ARM's rejected confirmation now retains the raw image label `alert`, empty
+image title, exact known prompt and metadata-bound 8:40 PM footer. The previous
+empty-image assumption is disproved. The strict classifier now requires exactly
+that observed image label, with all other fields and the final snapshot equality
+unchanged. It accepts neither missing nor arbitrary image metadata. The fixture
+is replaced with this exact ARM tree, without binding paths, PIDs or pixels.
+The old classifier fails this fixture through the production raw-snapshot
+controller. The repair passes 63 controller and 71 filtering/privacy cases,
+including refusal of empty, unexpected, authority-bearing and changed image text.
+
+Intel has a distinct `ProcessQueryUnavailable` HOLD before any observation or
+confirmation artifact; no Open was attempted. Its transient Apple CloudKit
+connection loss recovered through the existing ticket-validation retry, and
+notarization/Gatekeeper checks subsequently passed. The process-query subcause
+is not established by retained evidence. It is not claimed fixed by the ARM
+profile correction, and no broker deadline, trust check or startup deadline is
+changed to hide it. Both products remained stopped and produced no demo PNG.
+Cleanup, collection and bridge exits are zero; the native test exit is 65.
+
+Focused capture 22, quarantine 15, export 25, attachment 27 and lifecycle 75
+checks also pass, together with Bash syntax, ShellCheck, actionlint, whitespace
+and a fresh sandbox-preserving QA build. The full expensive CI suite is not
+repeated for this one-field profile correction; retained `23946da` results remain
+separate. A new exact-candidate XHigh Standards/Spec pass is required before push.
+Actual native Open, required PNG, finalized export and hosted CI remain HOLD.
 
 ## Remaining gates and cleanup
 

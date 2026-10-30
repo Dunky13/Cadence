@@ -2,7 +2,7 @@
   "children": [
     {
       "children": [],
-      "label": "",
+      "label": "alert",
       "title": "",
       "truncated": false,
       "type": 43
@@ -18,7 +18,7 @@
     {
       "children": [],
       "label": "",
-      "staticText": "CadenceReleaseVerification downloaded this file today at 7:32 PM. Apple checked it for malicious software and none was detected.",
+      "staticText": "CadenceReleaseVerification downloaded this file today at 8:40 PM. Apple checked it for malicious software and none was detected.",
       "title": "",
       "truncated": false,
       "type": 48

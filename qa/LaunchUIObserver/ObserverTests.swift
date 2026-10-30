@@ -249,7 +249,7 @@ final class ObserverTests: XCTestCase {
         // caller opts into immutable static-text strings, never editable values.
         let readable: Set<XCUIElement.ElementType> = [.window, .dialog, .alert, .sheet, .button, .staticText]
         // In that same verified context, preserve image labels/titles so the
-        // empty-image profile and final equality validate actual metadata.
+        // exact image profile and final equality validate actual metadata.
         let show = readable.contains(snapshot.elementType) || (staticTextValues && snapshot.elementType == .image)
         var text: String?
         var invalidText = false
@@ -330,7 +330,7 @@ final class ObserverTests: XCTestCase {
                     XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.button.rawValue],
                   node.children.allSatisfy({ $0.children.isEmpty && !$0.truncated }) else { return false }
             let parts = node.children
-            guard parts[0].label.isEmpty, parts[0].title.isEmpty, parts[0].staticText == nil,
+            guard parts[0].label == "alert", parts[0].title.isEmpty, parts[0].staticText == nil,
                   parts[1].label.isEmpty, parts[1].title.isEmpty, let prompt = parts[1].staticText,
                   prompts.contains(normalized(prompt)),
                   parts[2].label.isEmpty, parts[2].title.isEmpty, let notice = parts[2].staticText,

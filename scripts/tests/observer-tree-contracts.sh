@@ -92,10 +92,10 @@ cat >> "$work/policy.swift" <<'SWIFT'
             check(hidden.staticText == nil && valueReads == 0 && hidden.label.isEmpty, "Editable value was read or retained")
         }
         let native = try JSONDecoder().decode(Node.self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
-        let notice = "CadenceReleaseVerification downloaded this file today at 7:32 PM. Apple checked it for malicious software and none was detected."
+        let notice = "CadenceReleaseVerification downloaded this file today at 8:40 PM. Apple checked it for malicious software and none was detected."
         check(normalOpenConfirmation(native, expectedDownloadNotice: notice), "Observed native profile rejected")
         check(!normalOpenConfirmation(native), "Missing quarantine context accepted")
-        check(!normalOpenConfirmation(native, expectedDownloadNotice: notice.replacingOccurrences(of: "7:32", with: "7:31")), "Wrong bound timestamp accepted")
+        check(!normalOpenConfirmation(native, expectedDownloadNotice: notice.replacingOccurrences(of: "8:40", with: "8:39")), "Wrong bound timestamp accepted")
         func changed(_ node: Node, type: UInt? = nil, label: String? = nil, title: String? = nil, children: [Node]? = nil, truncated: Bool? = nil) -> Node {
             Node(type: type ?? node.type, label: label ?? node.label, title: title ?? node.title, children: children ?? node.children, truncated: truncated ?? node.truncated, staticText: node.staticText)
         }
@@ -112,6 +112,8 @@ cat >> "$work/policy.swift" <<'SWIFT'
             changed(native, children: Array(native.children.dropLast())),
             changed(native, children: native.children + [native.children[3]]),
             child(0, changed(native.children[0], label: "Unknown image label")),
+            child(0, changed(native.children[0], label: "")),
+            child(0, changed(native.children[0], title: "Unknown image title")),
             child(1, changed(native.children[1], label: "Unknown label")),
             child(1, changed(native.children[1], title: "Unknown title")),
             child(1, text(native.children[1], nil)),
