@@ -245,7 +245,7 @@ launch_ui_attach() {
 }
 
 launch_ui_finish() {
-    local cleanup_result=0 collection_result=0 bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
+    local cleanup_result=0 collection_result=0 normal_open_result=0 completion_frame=unavailable bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
     launch_ui_stop || cleanup_result=1
     if [[ ${observer_ready:-false} == true && -f ${observer_control:-}/launch.json ]]; then
         local receipt_launcher=''
@@ -271,7 +271,21 @@ launch_ui_finish() {
     else
         printf 'Bootstrap diagnostic unavailable: no verified reaped client; original results preserved.\n' >&2
     fi
-    if [[ $cleanup_result == 0 && $collection_result == 0 && ${observer_bridge_result:-0} == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
+    # A fixed diagnostic only, never a substitute for successful XCTest/export.
+    if [[ -n ${observer_control:-} && -n ${observer_id:-} && -f $observer_control/xcode-private.log && ! -L $observer_control/xcode-private.log ]]; then
+        completion_frame=not-observed
+        if grep -qF "CadenceObserverDone:$observer_id:EndCadenceObserver" "$observer_control/xcode-private.log"; then completion_frame=observed; fi
+    fi
+    if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true ]]; then
+        # Product PNG success cannot replace the safely exported action record.
+        if [[ ${observer_id:-} =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ &&
+            -f $LAUNCH_UI_EVIDENCE_DIR/first-open.json && ! -L $LAUNCH_UI_EVIDENCE_DIR/first-open.json ]] &&
+            jq -e --arg nonce "$observer_id" 'type == "object" and keys == ["action", "observation_id"] and .action == "verified-normal-open" and .observation_id == $nonce' \
+                "$LAUNCH_UI_EVIDENCE_DIR/first-open.json" >/dev/null 2>&1; then
+            :
+        else normal_open_result=1; fi
+    fi
+    if [[ $cleanup_result == 0 && $collection_result == 0 && $normal_open_result == 0 && ${observer_bridge_result:-0} == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then
         launch_ui_status OBSERVED 'Telemetry recorded; original startup result remains authoritative.' "$1"
@@ -280,12 +294,12 @@ launch_ui_finish() {
         if [[ -f $LAUNCH_UI_EVIDENCE_DIR/status.json ]]; then
             cp "$LAUNCH_UI_EVIDENCE_DIR/status.json" "$LAUNCH_UI_EVIDENCE_DIR/preflight.json" || return 1
         fi
-        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result; bridge exit ${observer_bridge_result:-0}." "$1"
+        launch_ui_status HOLD "UI observation unavailable or incomplete; test exit ${observer_test_result:-unavailable}; cleanup exit $cleanup_result; collection exit $collection_result; bridge exit ${observer_bridge_result:-0}; Open evidence exit $normal_open_result; completion frame $completion_frame." "$1"
     fi
     # Consent is an authoritative controller, unlike optional read-only images.
     # Rejection/failed XCTest cannot qualify a product that later renders a PNG.
     if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true &&
-        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 || ${observer_bridge_result:-0} != 0 ) ]]; then
+        ( ${observer_ready:-false} != true || ${observer_test_result:-unavailable} != 0 || $collection_result != 0 || ${observer_bridge_result:-0} != 0 || $normal_open_result != 0 ) ]]; then
         return 1
     fi
     return "$cleanup_result"

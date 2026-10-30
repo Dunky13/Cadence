@@ -159,6 +159,12 @@ if [[ $FIXTURE_CASE == protocol-missing ]]; then
     ! grep -Eq 'FAKE_SECRET|private$' "$FIXTURE/evidence/bootstrap.json"
 fi
 case $FIXTURE_CASE in
+    collector-failure|collector-failure-enabled)
+        jq -e '.status == "HOLD" and (.reason | contains("completion frame observed"))' "$FIXTURE/evidence/status.json" >/dev/null ;;
+    permission-request)
+        jq -e '.status == "HOLD" and (.reason | contains("completion frame not-observed"))' "$FIXTURE/evidence/status.json" >/dev/null ;;
+esac
+case $FIXTURE_CASE in
     stage-before-ready) expected_stage=screenSessionStarted ;;
     stage-only-ready) expected_stage=ready ;;
     foreign-stage|unknown-stage) expected_stage=unavailable ;;
@@ -370,6 +376,7 @@ diagnostic_launcher=900
 diagnostic_script=/usr/bin/true
 observer_evidence_owned=true
 observer_ready=true
+observer_id=AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA
 observer_control=''
 observer_plan=''
 observer_cleanup_failed=false
@@ -390,6 +397,7 @@ for shell_mode in -e +e; do
                     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/ui" "$fixture/consumer"
                     printf 'Observed: synthetic controller\n' > "$fixture/ui/session.txt"
                     printf '{}\n' > "$fixture/ui/observation-0.json"
+                    printf '{"action":"verified-normal-open","observation_id":"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"}\n' > "$fixture/ui/first-open.json"
                     result=0
                     OBSERVER_SCRIPT="$root/scripts/launch-ui-observer.sh" CLEANUP_SCRIPT="$work/cleanup.sh" \
                         FIXTURE="$fixture" FIXTURE_CLIENT_EXIT="$client" FIXTURE_BRIDGE_EXIT="$bridge" FIXTURE_STATUS="$original" \
@@ -407,6 +415,35 @@ for shell_mode in -e +e; do
                 done
             done
         done
+    done
+done
+# Enabled first-open requires its exact exported action/nonce, even with PNG,
+# successful test, bridge and collection. Read-only mode remains independent.
+for shell_mode in -e +e; do
+    for receipt in missing foreign action malformed symlink extra array fifo; do
+        fixture="$work/open-proof-$shell_mode-$receipt"
+        mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/ui" "$fixture/consumer"
+        printf 'Observed: synthetic controller\n' > "$fixture/ui/session.txt"
+        printf '{}\n' > "$fixture/ui/observation-0.json"
+        case $receipt in
+            foreign) printf '{"action":"verified-normal-open","observation_id":"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"}\n' > "$fixture/ui/first-open.json" ;;
+            action) printf '{"action":"unclassified","observation_id":"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"}\n' > "$fixture/ui/first-open.json" ;;
+            malformed) printf '{\n' > "$fixture/ui/first-open.json" ;;
+            extra) printf '{"action":"verified-normal-open","observation_id":"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA","unexpected":true}\n' > "$fixture/ui/first-open.json" ;;
+            array) printf '[]\n' > "$fixture/ui/first-open.json" ;;
+            fifo) mkfifo "$fixture/ui/first-open.json" ;;
+            symlink)
+                printf '{"action":"verified-normal-open","observation_id":"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"}\n' > "$fixture/foreign.json"
+                ln -s "$fixture/foreign.json" "$fixture/ui/first-open.json" ;;
+        esac
+        result=0
+        OBSERVER_SCRIPT="$root/scripts/launch-ui-observer.sh" CLEANUP_SCRIPT="$work/cleanup.sh" \
+            FIXTURE="$fixture" FIXTURE_CLIENT_EXIT=0 FIXTURE_BRIDGE_EXIT=0 FIXTURE_STATUS=0 \
+            LAUNCH_UI_ALLOW_NORMAL_OPEN=true LAUNCH_UI_EVIDENCE_DIR="$fixture/ui" INSTALL_EVIDENCE_DIR="$fixture/consumer" \
+            /bin/bash "$shell_mode" "$work/controller-exit-driver.sh" > "$fixture/log" 2>&1 || result=$?
+        [[ $result == 1 && ! -e $fixture/scratch && -s $fixture/consumer/startup-$(uname -m).png ]]
+        jq -e '.status == "HOLD" and (.reason | contains("Open evidence exit 1"))' "$fixture/ui/status.json" >/dev/null
+        cases=$((cases + 1))
     done
 done
 printf 'Launch UI observer: %s synthetic authority/lifecycle contracts passed; no native UI session executed.\n' "$cases"

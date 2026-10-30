@@ -22,7 +22,7 @@ cleanup() {
     trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
     if declare -F launch_ui_finish >/dev/null; then
         if ! launch_ui_finish "$result"; then
-            printf 'UI observer owned teardown failed; qualification is held.\n' >&2
+            printf 'UI observer qualification failed; inspect test, export and teardown status.\n' >&2
             if [[ $result == 0 ]]; then result=1; fi
         fi
     fi

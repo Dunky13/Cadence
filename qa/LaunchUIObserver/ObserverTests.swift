@@ -472,6 +472,7 @@ final class ObserverTests: XCTestCase {
     }
 
     private func capture(_ binding: Binding, _ launch: Launch, index: Int) async throws -> CaptureResult {
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         guard validCandidate(URL(fileURLWithPath: binding.copiedPath), binding) else {
             throw NSError(domain: "CopiedCandidateIdentityMismatch", code: 1)
         }
@@ -482,17 +483,22 @@ final class ObserverTests: XCTestCase {
         var images: [(String, Data)] = []
         var limited = owners.count > 16
         for owner in owners.prefix(16) {
+            guard !stopRequested else { throw ObserverCancellation.stopped }
             guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else {
                 unavailable.append(owner); continue
             }
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
             do {
+                guard !stopRequested else { throw ObserverCancellation.stopped }
                 let elements = try systemSurfaces(proxy)
+                guard !stopRequested else { throw ObserverCancellation.stopped }
                 limited = limited || elements.count > 8
                 if elements.isEmpty { unavailable.append(owner) }
                 for (number, element) in elements.prefix(8).enumerated() {
+                    guard !stopRequested else { throw ObserverCancellation.stopped }
                     var budget = 1024
                     let tree = safeTree(try element.snapshot(), budget: &budget)
+                    guard !stopRequested else { throw ObserverCancellation.stopped }
                     limited = limited || tree.truncated
                     guard !tree.truncated else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
                     guard !permissionRequest(tree) else { throw NSError(domain: "UIAuthorityRequestHOLD", code: 1) }
@@ -501,8 +507,10 @@ final class ObserverTests: XCTestCase {
                     // authorization or an ambiguous/changing surface stays HOLD.
                     var isolated: (UInt32, Data)?
                     if !tree.truncated && !editableContent(tree) {
+                        guard !stopRequested else { throw ObserverCancellation.stopped }
                         isolated = try? await isolatedWindowImage(owner, element, tree)
                     }
+                    guard !stopRequested else { throw ObserverCancellation.stopped }
                     let name = isolated == nil ? "" : "system-\(index)-\(owner.pid)-\(number).png"
                     guard NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable else {
                         unavailable.append(owner); continue
@@ -511,6 +519,7 @@ final class ObserverTests: XCTestCase {
                     if let isolated { images.append((name, isolated.1)) }
                 }
             } catch {
+                if case ObserverCancellation.stopped = error { throw error }
                 if ["UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD"].contains((error as NSError).domain) { throw error }
                 unavailable.append(owner)
             }
@@ -522,6 +531,7 @@ final class ObserverTests: XCTestCase {
             capturedUTC: ISO8601DateFormatter().string(from: Date()), ownedProcesses: owned,
             windows: windows, unavailableOwners: unavailable, limited: limited, complete: complete,
             interpretation: "Read-only system UI observation; window ownership is Apple-signature/PID bound. Candidate causality and button meaning are unclassified. No runtime acceptance.")
+        guard !stopRequested else { throw ObserverCancellation.stopped }
         try write(observation, to: evidence.appendingPathComponent("observation-\(index).json"))
         for (name, data) in images { try retainEvidence(data, name: name) }
         return CaptureResult(imageAvailable: !images.isEmpty, complete: complete)
@@ -611,6 +621,10 @@ final class ObserverTests: XCTestCase {
                 progress.include(try await capture(binding, launch, index: index))
                 if stopRequested { break }
                 try openNormalConfirmation(binding, launch)
+                // The controlled first-open task is complete only after its
+                // action record is retained. Do not begin later telemetry
+                // queries while the product's successful exit starts teardown.
+                if normalOpenAttempted { break }
             } catch ObserverCancellation.stopped { break }
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) { break }
         }

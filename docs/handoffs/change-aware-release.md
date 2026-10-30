@@ -597,6 +597,66 @@ natural-exit test to require the child PID to be absent, excluding zombies.
 No local native UI or public product execution is claimed. Fresh XHigh review
 and both hosted product outcomes are required before acceptance.
 
+## Both native product startups pass; observer finalization remains held
+
+[Run 41130939129](https://github.com/Dunky13/Cadence/actions/runs/41130939129)
+on `09dbad1` demonstrates normal product launch, demo render and exit within the
+original startup loop on both architectures. Both exported native PNGs were
+inspected and show the expected read-only Cadence demo screen. This establishes
+the product-startup improvement from the supervisor repair. Both native jobs
+and `ci-required` still fail, and packaging skips, because observer qualification
+does not finalize. It is not a passing native installation qualification.
+
+Both consumer archives match GitHub metadata:
+
+- arm64: `3631b52bddc668cb457b8774f6c50328c3f90dd3a64b5be73263cd2f4d5a38fa`.
+- Intel: `a2218e28b299cff212e0d91e137af519bc80dc6ae403d6ea75749f53aaed1c23`.
+
+Both final statuses retain original startup exit zero, test exit 143, cleanup
+zero, collection one and bridge zero. Both passed readiness, so the older Intel
+readiness/process-query failures do not describe the current failure. No finalized
+Open action record survives the interrupted export. The precise in-flight XCTest
+operation at termination is not established by retained diagnostics; it must not
+be invented from the successful PNG.
+
+The source continued its optional three-sample sequence after the verified
+normal Open had returned and retained its action record. Parent shutdown on
+product exit could then overlap later capture queries; capture also lacked stop
+checks between those queries. The new exact-production loop regression reproduces
+that unnecessary post-Open sampling against the parent. The controlled first-open
+path now completes sampling after successful Open record retention. Read-only
+mode and an unfinished confirmation retain all three original samples. Controller
+or record errors still propagate as failures. Stop checks before and after owner,
+surface, snapshot and image work prevent subsequent queries on cancellation;
+the cancellation exception is rethrown rather than classified as an unavailable
+owner.
+
+Enabled first-open qualification now explicitly requires the safely exported
+regular, non-symlink `first-open.json` with exactly the verified action and the
+current nonce. Missing, malformed, wrong-action, foreign-nonce, extra-key, array, FIFO and symlink records
+hold qualification even with a valid PNG and otherwise successful test/export.
+Optional read-only imagery remains separate. A fixed completion-frame diagnostic
+records only observed/not-observed/unavailable in the existing HOLD reason, to
+distinguish an unfinished test from later finalization on future failures. It is
+not an acceptance input. The startup log now calls a failure observer qualification
+rather than attributing every controller/export failure to owned teardown.
+
+No deadline is increased: thirty-second product startup, thirty-five readiness
+iterations, forty-five-second launcher safety and the existing teardown grace
+remain. Candidate/launcher/Apple-owner identity, quarantine/signature/ticket gates,
+complete confirmation text, unique enabled Open, cancellation and verified export
+remain mandatory. No raw log, new uploader or permission configuration is added.
+
+Focused checks pass: 11 exact-loop session cases, 29 capture cases, 95 lifecycle/
+authority cases, 63 first-open cases, 71 filtering/privacy cases, 25 export,
+27 attachment, 26 broker, 12 IPC client, eight stage states and 110 workflow cases.
+The session loop contract is integrated into full CI. The complete expensive suite
+and 59 Swift/app tests are not repeated for this QA/control-only increment; the
+full `09dbad1` repair evidence remains separate. A fresh sandbox-preserving QA
+compile and static checks pass. A fresh exact-candidate XHigh review is required
+before push. Hosted finalized action/export proof, both complete native jobs,
+universal packaging and `ci-required` remain HOLD.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,
