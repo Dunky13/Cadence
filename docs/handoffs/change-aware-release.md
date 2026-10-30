@@ -45,6 +45,24 @@ re-reviews accepted the repair at source tree
 
 ## Validation and remaining gates
 
+PR #11's initial hosted run 41071030513 failed: arm64 passed trust gates but
+XCTest still exited 65 before readiness; Intel exhausted the existing bounded
+retries after repeated Apple CloudKit connection losses. The arm64 bootstrap
+flags remain UNKNOWN. Compile-only inspection confirmed the generated runner,
+fixture paths and test-host environment injection. No plan mismatch is proven.
+An additional optional `session-stage.json` records only eight fixed bootstrap
+states around candidate verification, the screen session, system-window queries
+and readiness. It cannot change controller results and contains no client text,
+environment, plan values or runtime acceptance. This probe does not fix or
+classify the underlying hosted failure; it identifies the reached boundary.
+The exact enum/writer passes all eight fixed states plus nil, missing and
+occupied-output cases. The 139 bootstrap privacy/signal contracts and updated
+QA compilation pass. Independent incremental Standards and Spec reviews found
+no production issue. Standards identified a non-owned missing-directory test
+fixture; root replaced it with an absent child of the owned temporary directory
+and verified it remains absent. No independent re-review of that small fixture
+repair is claimed.
+
 Local focused checks pass: 50 release-selection contracts, 21 inert consent
 controller cases, 27 dialog-policy cases, 55 observer lifecycle/cleanup cases,
 21 inert capture cases, 139 bootstrap privacy/deadline/signal cases, ShellCheck

@@ -13,6 +13,17 @@ final class ObserverTests: XCTestCase {
         let copiedPath, snapshotPath, observationID: String
     }
     struct Launch: Codable { let launcherPID: Int32 }
+    enum BootstrapStage: String, CaseIterable, Codable {
+        case protocolPathsReceived, candidateCheckStarted, candidateVerified
+        case screenSessionStarted, screenSessionReady
+        case ownerPreflightStarted, ownerPreflightReady, ready
+    }
+    struct BootstrapProgress: Encodable {
+        let schema = "cadence/ui-bootstrap-stage/v1"
+        let stage: BootstrapStage
+        let read_only = true
+        let runtime_acceptance = false
+    }
     struct OwnedProcess: Codable {
         let pid: Int32
         let executable, state: String
@@ -75,6 +86,13 @@ final class ObserverTests: XCTestCase {
 
     private func text(_ value: String, to url: URL) throws {
         try Data(value.utf8).write(to: url, options: .atomic)
+    }
+
+    private func recordBootstrapStage(_ stage: BootstrapStage) {
+        guard let evidence else { return }
+        // Fixed vocabulary only. Failure of this optional diagnostic must not
+        // change controller readiness, assertions, or the startup outcome.
+        try? write(BootstrapProgress(stage: stage), to: evidence.appendingPathComponent("session-stage.json"))
     }
 
     private func read<T: Decodable>(_ type: T.Type, _ name: String) throws -> T {
@@ -377,18 +395,24 @@ final class ObserverTests: XCTestCase {
         }
         control = URL(fileURLWithPath: controlPath)
         evidence = URL(fileURLWithPath: evidencePath)
+        recordBootstrapStage(.protocolPathsReceived)
         var completed = false
         defer {
             if !completed { try? text("HOLD: native observation did not complete; normal Open attempted=\(normalOpenAttempted); no permission grant.\n", to: evidence.appendingPathComponent("session.txt")) }
             try? text("done\n", to: control.appendingPathComponent("done"))
         }
         let binding = try read(Binding.self, "binding.json")
+        recordBootstrapStage(.candidateCheckStarted)
         guard validCandidate(URL(fileURLWithPath: binding.copiedPath), binding) else {
             throw NSError(domain: "CandidateIdentityMismatch", code: 1)
         }
+        recordBootstrapStage(.candidateVerified)
         // Forces the supported test-control session to initialize BEFORE launch.
         // This image is discarded. Session/permission failure cannot mark ready.
+        recordBootstrapStage(.screenSessionStarted)
         _ = XCUIScreen.main.screenshot().pngRepresentation
+        recordBootstrapStage(.screenSessionReady)
+        recordBootstrapStage(.ownerPreflightStarted)
         let preflightOwners = try systemOwners()
         guard preflightOwners.count <= 16 else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
         for owner in preflightOwners {
@@ -407,8 +431,10 @@ final class ObserverTests: XCTestCase {
                 }
             }
         }
+        recordBootstrapStage(.ownerPreflightReady)
         preflightConsentWindowsAbsent = true
         try text(binding.observationID, to: control.appendingPathComponent("ready"))
+        recordBootstrapStage(.ready)
         let deadline = Date().addingTimeInterval(65)
         while !files.fileExists(atPath: control.appendingPathComponent("launch.json").path) {
             if files.fileExists(atPath: control.appendingPathComponent("stop").path) || Date() > deadline { return }
