@@ -103,7 +103,10 @@ if [[ $FIXTURE_CASE == local ]]; then GITHUB_ACTIONS=false; fi
 if [[ $FIXTURE_CASE == missing-binding ]]; then unset LAUNCH_UI_EXPECTED_SHA256; fi
 if [[ $FIXTURE_CASE == collector-failure-enabled ]]; then export LAUNCH_UI_ALLOW_NORMAL_OPEN=true; fi
 launch_ui_prepare "$FIXTURE/Cadence.app" "$FIXTURE/scratch"
-if [[ $observer_ready == true ]]; then launch_ui_attach 900; fi
+if [[ $observer_ready == true ]]; then
+    jq -n --arg nonce "$observer_id" '{schema:"cadence/launcher/v1",observationID:$nonce,launcherPID:900,supervisorPID:900}' > "$observer_control/launch.json"
+    launch_ui_attach 900
+fi
 if [[ $FIXTURE_CASE == diagnostic-output-fail ]]; then mkdir "$FIXTURE/evidence/bootstrap.json"; fi
 finish_result=0
 launch_ui_finish 42 || finish_result=$?
@@ -146,11 +149,14 @@ if [[ $FIXTURE_CASE == protocol-missing ]]; then
 fi
 DRIVER
 cases=0
-for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled prefixed-ready success; do
+for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled missing-verifier prefixed-ready success; do
     fixture="$work/$scenario"
     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/build/Build/Products"
     : > "$fixture/calls"
     : > "$fixture/signals"
+    printf '#!/bin/bash\nexit 0\n' > "$fixture/build/Build/Products/observer-launcher"
+    chmod +x "$fixture/build/Build/Products/observer-launcher"
+    if [[ $scenario == missing-verifier ]]; then rm "$fixture/build/Build/Products/observer-launcher"; fi
     cat > "$fixture/build/Build/Products/LaunchUIObserver_fixture.xctestrun" <<'PLAN'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -308,7 +314,7 @@ cp "$root/scripts/launch-ui-observer.sh" "$work/launcher/launch-ui-observer.sh"
 /usr/bin/perl - "$root/scripts/verify-demo-startup.sh" > "$work/launcher/verify-demo-startup.sh" <<'PERL'
 open(my $source, '<', $ARGV[0]) or die;
 my $text = do { local $/; <$source> };
-my $count = ($text =~ s{^/usr/bin/open (?=-n -W )}{q{"$FIXTURE_OPEN" }}gme);
+my $count = ($text =~ s{^([ \t]*)/usr/bin/open (?=-n -W )}{$1 . q{"$FIXTURE_OPEN" }}gme);
 die "Expected one explicit system LaunchServices boundary\n" unless $count == 1;
 print $text;
 PERL

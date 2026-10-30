@@ -2,9 +2,9 @@
 # Parent-owned, read-only process metadata for one sandboxed observer session.
 set -euo pipefail
 umask 077
-[[ $# == 4 && -d $1 && ! -L $1 && $2 =~ ^[1-9][0-9]*$ &&
-    $3 =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ && $4 =~ ^[1-9][0-9]*$ ]] || exit 2
-exec /usr/bin/perl - "$1" "$2" "$3" "$4" <<'PERL'
+[[ $# == 5 && -d $1 && ! -L $1 && $2 =~ ^[1-9][0-9]*$ &&
+    $3 =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ && $4 =~ ^[1-9][0-9]*$ && -f $5 && ! -L $5 && -x $5 ]] || exit 2
+exec /usr/bin/perl - "$1" "$2" "$3" "$4" "$5" <<'PERL'
 use strict;
 use warnings;
 use Fcntl qw(O_RDONLY O_WRONLY O_CREAT O_EXCL O_NOFOLLOW O_NONBLOCK S_ISREG S_ISDIR);
@@ -12,7 +12,8 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Encode qw(decode FB_CROAK);
 use Time::HiRes qw(sleep alarm clock_gettime CLOCK_MONOTONIC);
-my ($control, $launcher, $nonce, $parent) = @ARGV;
+my ($control, $supervisor, $nonce, $parent, $verifier) = @ARGV;
+my $launcher;
 my $deadline = clock_gettime(CLOCK_MONOTONIC) + 100;
 my ($child, $pending);
 my $stop_child = sub {
@@ -46,6 +47,9 @@ END { $cleanup->() if $cleanup; }
 alarm 100;
 my @directory = lstat $control;
 die "Unsafe bridge control\n" unless @directory && S_ISDIR($directory[2]) && $directory[4] == $< && !($directory[2] & 077);
+my @verifier_file = lstat $verifier;
+die "Unsafe launcher verifier\n" unless @verifier_file && S_ISREG($verifier_file[2]) && $verifier_file[3] == 1 &&
+    $verifier_file[4] == $< && !($verifier_file[2] & 022) && $verifier_file[7] <= 16777216;
 sub open_owned {
     my ($path, $cap) = @_;
     my @before = lstat $path;
@@ -67,14 +71,14 @@ my $original = "$binding->{copiedPath}/Contents/MacOS/Cadence";
 my $log = open_owned("$control/xcode-private.log", 1048576);
 my ($buffer, $bytes, $requests) = ('', 0, 0);
 my %handled;
-sub ps {
-    my (@arguments) = @_;
+sub run_program {
+    my ($program, @arguments) = @_;
     my ($result, $pipe, $ok);
     {
         local $SIG{ALRM} = sub { die "Bridge process query deadline\n"; };
         alarm 2;
         $ok = eval {
-            $child = open($pipe, '-|', '/bin/ps', @arguments);
+            $child = open($pipe, '-|', $program, @arguments);
             die "Cannot start bridge process query\n" unless $child;
             my $data = '';
             while (1) {
@@ -98,8 +102,20 @@ sub ps {
     alarm $remaining;
     return $ok ? $result : undef;
 }
+sub ps { return run_program('/bin/ps', @_); }
 sub query {
     my ($kind, $pid) = @_;
+    if (!defined $launcher) {
+        my $receipt_file = open_owned("$control/launch.json", 65536);
+        my $length = sysread($receipt_file, my $receipt_data, 65537);
+        die "Bridge receipt limit\n" unless defined($length) && $length <= 65536;
+        close $receipt_file or die "Cannot close bridge receipt\n";
+        my $receipt = decode_json($receipt_data);
+        die "Unbound bridge receipt\n" unless ref($receipt) eq 'HASH' && ($receipt->{schema} // '') eq 'cadence/launcher/v1' &&
+            ($receipt->{observationID} // '') eq $nonce && ($receipt->{supervisorPID} // 0) == $supervisor &&
+            ($receipt->{launcherPID} // '') =~ /^[1-9][0-9]*$/;
+        $launcher = $receipt->{launcherPID};
+    }
     if ($kind eq 'processes') {
         return undef unless $pid == 0;
         my $listing = ps('-axo', 'pid=,comm=');
@@ -107,23 +123,22 @@ sub query {
         return join('', map { "$_\n" } grep { /^\s*[1-9][0-9]*\s+.*\/Cadence\.app\/Contents\/MacOS\/Cadence\s*$/ } split /\n/, $listing);
     }
     return undef unless $pid > 1 && $pid <= 2147483647;
+    if ($pid == $launcher) {
+        my $expected = "/usr/bin/open -n -W $binding->{copiedPath} --args --demo --snapshot $binding->{snapshotPath}\n";
+        my $certified = run_program($verifier, 'verify', $control, $supervisor, $pid);
+        return undef unless defined($certified) && $certified eq $expected;
+        return $certified if $kind eq 'command';
+        return "/usr/bin/open\n" if $kind eq 'executable';
+        return ps('-p', "$pid", '-o', 'stat=');
+    }
     my $executable = ps('-p', "$pid", '-o', 'comm=');
     return undef unless defined $executable;
     $executable =~ s/^\s+|\s+$//g;
-    if ($pid == $launcher) {
-        return undef unless $executable eq '/usr/bin/open';
-    } else {
-        return undef unless $executable eq $original || $executable =~ m{/AppTranslocation/[^\r\n]+/d/Cadence\.app/Contents/MacOS/Cadence$};
-    }
+    return undef unless $executable eq $original || $executable =~ m{/AppTranslocation/[^\r\n]+/d/Cadence\.app/Contents/MacOS/Cadence$};
     my $arguments = ps('-p', "$pid", '-o', 'command=');
     return undef unless defined $arguments;
     $arguments =~ s/^\s+|\s+$//g;
-    if ($pid == $launcher) {
-        my $expected = "-n -W $binding->{copiedPath} --args --demo --snapshot $binding->{snapshotPath}";
-        return undef unless $arguments eq "open $expected" || $arguments eq "/usr/bin/open $expected";
-    } else {
-        return undef unless $arguments eq "$executable --demo --snapshot $binding->{snapshotPath}";
-    }
+    return undef unless $arguments eq "$executable --demo --snapshot $binding->{snapshotPath}";
     return "$executable\n" if $kind eq 'executable';
     return "$arguments\n" if $kind eq 'command';
     return ps('-p', "$pid", '-o', 'stat=');

@@ -13,7 +13,7 @@ done
 /usr/bin/perl - "$work/repo/scripts/verify-demo-startup.sh" > "$work/repo/scripts/verify-demo-startup.pending" <<'PERL'
 open(my $source, '<', $ARGV[0]) or die;
 my $text = do { local $/; <$source> };
-my $count = ($text =~ s{^/usr/bin/open (?=-n -W )}{q{"$FIXTURE_OPEN" }}gme);
+my $count = ($text =~ s{^([ \t]*)/usr/bin/open (?=-n -W )}{$1 . q{"$FIXTURE_OPEN" }}gme);
 die "Expected one explicit system LaunchServices boundary\n" unless $count == 1;
 print $text;
 PERL

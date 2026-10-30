@@ -48,6 +48,16 @@ case "$*" in
 esac
 STUB
 chmod +x "$work/bin/ps"
+cat > "$work/bin/verifier" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+[[ $# == 4 && $1 == verify && $2 == "$FIXTURE/control" && $3 == 700 && $4 == 900 ]] || exit 98
+[[ ${FIXTURE_VERIFIER_FAIL:-false} != true ]] || exit 71
+if [[ ${FIXTURE_VERIFIER_TAMPER:-false} == true ]]; then printf 'EXCLUDED foreign command\n'; exit; fi
+if [[ ${FIXTURE_VERIFIER_TIMEOUT:-false} == true ]]; then printf '%s\n' "$$" > "$FIXTURE/query-child"; exec /bin/sleep 20; fi
+printf '/usr/bin/open -n -W %s/app with spaces/Cadence.app --args --demo --snapshot %s/scratch/startup.png\n' "$FIXTURE" "$FIXTURE"
+STUB
+chmod +x "$work/bin/verifier"
 # shellcheck source=scripts/launch-ui-observer.sh
 source "$root/scripts/launch-ui-observer.sh"
 nonce=AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA
@@ -56,10 +66,11 @@ new_case() {
     request_prefix=''; request_suffix=''; request_fragment=false; request_no_newline=false
     cases=$((cases+1)); fixture="$work/case-$cases"
     mkdir "$fixture" "$fixture/control"
-    observer_control="$fixture/control"; observer_id=$nonce; observer_product_launcher=900; observer_bridge_result=0
+    observer_control="$fixture/control"; observer_id=$nonce; observer_product_supervisor=700; observer_launcher_verifier="$work/bin/verifier"; observer_bridge_result=0
     jq -n --arg root "$fixture" --arg nonce "$nonce" '{observationID:$nonce,copiedPath:($root+"/app with spaces/Cadence.app"),snapshotPath:($root+"/scratch/startup.png")}' > "$observer_control/binding.json"
+    jq -n --arg nonce "$nonce" '{schema:"cadence/launcher/v1",observationID:$nonce,launcherPID:900,supervisorPID:700}' > "$observer_control/launch.json"
     : > "$observer_control/xcode-private.log"
-    FIXTURE="$fixture" FIXTURE_PS="$work/bin/ps" "$work/bridge.sh" "$observer_control" 900 "$nonce" "$$" > "$fixture/bridge-private.log" 2>&1 &
+    FIXTURE="$fixture" FIXTURE_PS="$work/bin/ps" "$work/bridge.sh" "$observer_control" 700 "$nonce" "$$" "$observer_launcher_verifier" > "$fixture/bridge-private.log" 2>&1 &
     observer_bridge_pid=$!
 }
 request() {
@@ -99,6 +110,17 @@ for pair in 'command 800' 'state 800' 'executable 800' 'command 802' 'command 90
 done
 for pair in 'command 777' 'command 801' 'command 803' 'state 0' 'processes 800'; do
     new_case; read -r kind pid <<< "$pair"; request "$kind" "$pid"; jq -e '.ok==false and .output==""' "$reply" >/dev/null; stop
+done
+for failure in FAIL TAMPER TIMEOUT; do
+    export "FIXTURE_VERIFIER_$failure=true"
+    new_case; request command 900
+    unset "FIXTURE_VERIFIER_$failure"
+    jq -e '.ok==false and .output==""' "$reply" >/dev/null
+    if [[ -f $fixture/query-child ]]; then
+        query_child=$(cat "$fixture/query-child")
+        if kill -0 "$query_child" 2>/dev/null; then exit 1; fi
+    fi
+    stop
 done
 export FIXTURE_PS_FAIL=true
 new_case; request processes 0; unset FIXTURE_PS_FAIL; jq -e '.ok==false and .output==""' "$reply" >/dev/null; stop

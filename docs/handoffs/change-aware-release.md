@@ -152,6 +152,73 @@ launcher SHA-256
 Actual repaired-head launcher validation, normal Open and startup remain hosted
 gates. The QA source is unchanged from the last successful compile.
 
+## Argument mutation and certified initial launch custody
+
+At `57bc97b`, [run 41093264872](https://github.com/Dunky13/Cadence/actions/runs/41093264872)
+gets both native runners through readiness, broker framing, owned-product
+queries and observation export. Both report the correct `/usr/bin/open`
+executable, then fail its command query without attempting Open. All four
+artifact archive digests match GitHub metadata, and both decrypted client logs
+match their bootstrap fingerprints:
+
+| Native runner | Client bytes | SHA-256 |
+| --- | ---: | --- |
+| arm64 | 27609 | `752ee2d81447e1dcc910accfe820c03369f76aef2117dba034b45d2a863b1b77` |
+| Intel | 26568 | `dcd76d350f7a860c8a1bd643ab79d2c35137b17ef66a6c0f6fd02528c9abc011` |
+
+A local invalid-target CLI probe reproduces the remaining guard failure: after
+open parses the arguments, ps reports a changed/truncated vector ending in
+split long options and omits the snapshot path. Raw kernel argument queries
+also lose the trailing arguments after that mutation. A suspended-spawn probe
+reads all eight original arguments exactly before user code executes. This
+local reproduction explains the matching hosted failure; the changed bytes
+were observed locally, not retained as raw public CI arguments. Apple's
+[ps argument reader](https://github.com/apple-oss-distributions/adv_cmds/blob/main/ps/print.c)
+and [Darwin process-argument handler](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sysctl.c)
+provide the primary interface context. No private entitlement, environment
+dump, permission grant or security override is used.
+
+The parent now supervises the unchanged ordinary LaunchServices invocation.
+It verifies Apple's system executable and every initial argument while the
+child is suspended, records an exclusive private nonce-bound receipt, then
+resumes it. Later metadata queries must match that receipt, binding, and both
+live kernel identities (PID, UID, parent, start timestamp and executable).
+The command returned is explicitly the certified initial vector, not a claim
+that open's runtime argument strings are unchanged. Product argv/hash/signature
+checks remain independent. No prefix-only or missing-snapshot fallback is added.
+
+Child masks/defaults are restored explicitly. Cancellation/stop is checked
+before resume, child status is mirrored, and the original outer 30-second loop
+has no added receipt wait. A separate 45-second supervisor safety alarm and
+bounded outer TERM/KILL cover teardown. Child cleanup survives supervisor KILL:
+published custody pins the original child identity, while pre-publication
+recovery requires an owned still-stopped system launcher with every exact
+initial argument and known parent/orphan relationship. Other stopped processes
+are left alone. Incomplete cleanup holds qualification and retains control.
+The native error message exposes only a fixed failure-stage vocabulary.
+
+The 79 native contracts verify exact arguments, wrong bindings/nonces/PIDs,
+argument-display mutation, live proof, TERM/INT/HUP/KILL, the actual outer stop
+callback, unpublished-child recovery and foreign-process exclusion. Every app
+target is guaranteed nonexistent; no local product or UI is launched. Parent
+broker contracts expand to 26 cases, including verifier failure, output tamper
+and timeout; lifecycle contracts expand to 75, including a missing verifier.
+Both independent Standards and Spec source reviews report no remaining
+findings, including the fixed-stage/allocation-guard recheck. The full local
+scripts/ci.sh passes: all workflow/release contracts, sandbox QA compilation,
+59 Swift tests with real launchd integration and the native app build. The final
+79 native launcher contracts and static checks pass again after the safe stage
+labels and allocation guard. Reviewed identity-reader SHA-256:
+`c5285d27a081745189ec995764c9d3e7c1835c1adab4c281973a34c46853f612`.
+Reviewed final supervisor SHA-256:
+`894459dfa41018b1186d58ed69524e9b561a7d96aab8f1fd75500e7be8c5b625`.
+Final Standards review also caught a fixture-only leak if a second suspended
+spawn failed before cleanup was installed. Cleanup now starts immediately after
+the first spawn and tracks the second child only after success, retrying reaping
+on interruption. The 79 native contracts pass again after this repair.
+Hosted startup remains required, followed by removal of the temporary encrypted
+diagnostic exception.
+
 ## Validation and review
 
 At `a8b007c`, the full local scripts/ci.sh passed on arm64/macOS 27/Xcode 27.1,
@@ -189,12 +256,13 @@ increment and its separate reviews are recorded above.
 
 ## Remaining gates and cleanup
 
-The output-transport repair is verified by readiness on both architectures in
-run 41083249075. The framing repair is verified by hosted broker replies and an owned-process
-observation in run 41091739312. Its later launcher basename mismatch is repaired
-by the explicit system path; hosted launcher checks and startup remain required. The previously
-approved encrypted capture remains active with the same protected one-time key
-until that repair is verified; remove it before final acceptance.
+Readiness, framing, owned-product metadata and safe observation export are now
+verified on both hosted architectures. The mutable launcher-argument display
+still blocks startup at 57bc97b. The certified-initial-argument supervisor needs
+hosted verification of exact launcher custody, actual normal-Open matching and
+startup. The previously approved encrypted capture remains active with the
+same protected one-time key until repair verification; remove it before final
+acceptance.
 
 Repaired-head hosted arm64 and Intel readiness, actual dialog matching, native
 startup and finalized result/attachment export remain required. Missing UI

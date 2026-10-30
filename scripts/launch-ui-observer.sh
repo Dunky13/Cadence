@@ -34,7 +34,7 @@ launch_ui_stop_bridge() {
         bridge_state=$(ps -p "$observer_bridge_pid" -o stat= 2>/dev/null) || bridge_state=''
         [[ $bridge_state != Z* ]] || break
         bridge_arguments=$(ps -p "$observer_bridge_pid" -o command= 2>/dev/null) || bridge_arguments=''
-        if [[ $bridge_arguments != "/usr/bin/perl - $observer_control $observer_product_launcher $observer_id $$" ]]; then
+        if [[ $bridge_arguments != "/usr/bin/perl - $observer_control $observer_product_supervisor $observer_id $$ $observer_launcher_verifier" ]]; then
             return 1
         fi
         if ! kill -s "$signal" "$observer_bridge_pid" 2>/dev/null && kill -0 "$observer_bridge_pid" 2>/dev/null; then return 1; fi
@@ -48,6 +48,29 @@ launch_ui_stop_bridge() {
     observer_bridge_result=$bridge_status
     observer_bridge_pid=''
     return 0
+}
+
+launch_ui_stop_product() {
+    local product_signal product_state='' product_executable='' product_wait
+    [[ -n ${launcher:-} ]] || return 0
+    for product_signal in TERM KILL; do
+        if ! kill -0 "$launcher" 2>/dev/null; then break; fi
+        product_state=$(ps -p "$launcher" -o stat= 2>/dev/null) || product_state=''
+        [[ $product_state != Z* ]] || break
+        product_executable=$(ps -p "$launcher" -o comm= 2>/dev/null) || product_executable=''
+        [[ $product_executable == "$observer_launcher_verifier" ]] || return 1
+        if ! kill -s "$product_signal" "$launcher" 2>/dev/null && kill -0 "$launcher" 2>/dev/null; then return 1; fi
+        for ((product_wait=0; product_wait<5; product_wait++)); do
+            if ! kill -0 "$launcher" 2>/dev/null; then break; fi
+            sleep 0.05
+        done
+    done
+    if kill -0 "$launcher" 2>/dev/null; then
+        product_state=$(ps -p "$launcher" -o stat= 2>/dev/null) || product_state=''
+        [[ $product_state == Z* ]] || return 1
+    fi
+    wait "$launcher" 2>/dev/null || true
+    launcher=''
 }
 
 launch_ui_stop() {
@@ -123,7 +146,8 @@ launch_ui_prepare() {
     observer_id=''
     observer_bridge_pid=''
     observer_bridge_result=0
-    observer_product_launcher=''
+    observer_product_supervisor=''
+    observer_launcher_verifier=''
     observer_test_result=unavailable
     observer_cleanup_failed=false
     [[ -n ${LAUNCH_UI_EVIDENCE_DIR:-} ]] || return 0
@@ -138,6 +162,10 @@ launch_ui_prepare() {
         $(xcodebuild -version) != $'Xcode 26.3\n'* || -z ${LAUNCH_UI_BUILD_DIR:-} ||
         ! -d $LAUNCH_UI_BUILD_DIR || -L $LAUNCH_UI_BUILD_DIR ]]; then
         launch_ui_status HOLD 'Requires fresh hosted macOS 15 and selected Xcode 26.3 QA build.'; return 0
+    fi
+    observer_launcher_verifier="$(cd "$LAUNCH_UI_BUILD_DIR/Build/Products" && pwd -P)/observer-launcher"
+    if [[ ! -f $observer_launcher_verifier || -L $observer_launcher_verifier || ! -x $observer_launcher_verifier ]]; then
+        launch_ui_status HOLD 'QA launcher identity verifier unavailable.'; return 0
     fi
     launchctl print "gui/$(id -u)" >/dev/null 2>&1 || {
         launch_ui_status HOLD 'No existing GUI domain.'; return 0;
@@ -200,17 +228,25 @@ launch_ui_prepare() {
 
 launch_ui_attach() {
     [[ ${observer_ready:-false} == true ]] || return 0
-    observer_product_launcher=$1
+    observer_product_supervisor=$1
     "${BASH_SOURCE[0]%/*}/observer-process-bridge.sh" "$observer_control" "$1" "$observer_id" "$$" \
+        "$observer_launcher_verifier" \
         > "$observer_control/process-bridge-private.log" 2>&1 &
     observer_bridge_pid=$!
-    jq -n --argjson pid "$1" '{launcherPID:$pid}' > "$observer_control/launch-pending.json" || return 1
-    mv "$observer_control/launch-pending.json" "$observer_control/launch.json"
 }
 
 launch_ui_finish() {
     local cleanup_result=0 collection_result=0 bootstrap_script="${BASH_SOURCE[0]%/*}/capture-observer-bootstrap.sh"
     launch_ui_stop || cleanup_result=1
+    if [[ ${observer_ready:-false} == true && -f ${observer_control:-}/launch.json ]]; then
+        local receipt_launcher=''
+        receipt_launcher=$(jq -er --arg nonce "$observer_id" --argjson supervisor "$observer_product_supervisor" \
+            'select(.schema=="cadence/launcher/v1" and .observationID==$nonce and .supervisorPID==$supervisor) | .launcherPID | select(type=="number" and .>1 and floor==.)' \
+            "$observer_control/launch.json") || cleanup_result=1
+        # Consumed by the caller's EXIT-trap diagnostic after this sourced callback.
+        # shellcheck disable=SC2034
+        if [[ $receipt_launcher =~ ^[1-9][0-9]*$ ]]; then diagnostic_launcher=$receipt_launcher; fi
+    fi
     [[ ${observer_cleanup_failed:-false} != true ]] || cleanup_result=1
     if [[ ${observer_evidence_owned:-false} != true || -z ${LAUNCH_UI_EVIDENCE_DIR:-} || ! -d $LAUNCH_UI_EVIDENCE_DIR ]]; then
         [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} != true ]] || return 1
