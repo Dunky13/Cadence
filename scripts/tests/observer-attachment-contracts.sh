@@ -34,14 +34,14 @@ cat >> "$work/attachments.swift" <<'SWIFT'
             catch { precondition(stored.isEmpty) }
         }
         observationID = nonce
-        let allowed = ["stage-0.json", "stage-7.json", "session.txt", "first-open.json", "observation-0.json", "observation-2.json", "system-0-50-0.png", "system-2-50-7.png"]
+        let allowed = ["stage-0.json", "stage-7.json", "session.txt", "first-open.json", "confirmation.json", "observation-0.json", "observation-2.json", "system-0-50-0.png", "system-2-50-7.png"]
         for name in allowed {
             try retainEvidence(bytes, name: name)
             guard let item = stored.last else { preconditionFailure("Attachment missing") }
             precondition(item.name == "CadenceObserver-\(nonce)-\(name)" && item.data == bytes)
             precondition(item.type == (name.hasSuffix(".json") ? "public.json" : (name.hasSuffix(".png") ? "public.png" : "public.plain-text")))
         }
-        let rejected = ["../session.txt", "xcode-private.log", "bootstrap.json", "binding.json", "environment.txt", "stage-8.json", "observation-3.json", "system-3-50-0.png", "system-0-0-0.png", "system-0-50-8.png"]
+        let rejected = ["../session.txt", "xcode-private.log", "bootstrap.json", "confirmation.txt", "confirmation-1.json", "binding.json", "environment.txt", "stage-8.json", "observation-3.json", "system-3-50-0.png", "system-0-0-0.png", "system-0-50-8.png"]
         for name in rejected {
             do { try retainEvidence(bytes, name: name); preconditionFailure("Unsafe attachment accepted") }
             catch { precondition(stored.count == allowed.count) }

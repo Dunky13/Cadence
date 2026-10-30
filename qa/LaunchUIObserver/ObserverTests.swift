@@ -102,7 +102,7 @@ final class ObserverTests: XCTestCase {
 
     private func retainEvidence(_ data: Data, name: String) throws {
         guard let observationID, UUID(uuidString: observationID) != nil,
-              name.range(of: "^(stage-[0-7]\\.json|session\\.txt|first-open\\.json|observation-[0-2]\\.json|system-[0-2]-[1-9][0-9]*-[0-7]\\.png)$", options: .regularExpression) != nil else {
+              name.range(of: "^(stage-[0-7]\\.json|session\\.txt|first-open\\.json|confirmation\\.json|observation-[0-2]\\.json|system-[0-2]-[1-9][0-9]*-[0-7]\\.png)$", options: .regularExpression) != nil else {
             throw NSError(domain: "InvalidEvidenceNameHOLD", code: 1)
         }
         let type = name.hasSuffix(".json") ? "public.json" : (name.hasSuffix(".png") ? "public.png" : "public.plain-text")
@@ -291,6 +291,20 @@ final class ObserverTests: XCTestCase {
         return prompts.contains(where: labels.contains) && labels.isSubset(of: allowed)
     }
 
+    private func recordRejectedConfirmation(_ tree: Node, owner: Owner, owned: [OwnedProcess], binding: Binding, launch: Launch) {
+        // Optional, filtered diagnostic at the exact rejected policy boundary.
+        // No editable/authority UI, identifiers, pixels, or automatic acceptance.
+        guard !tree.truncated, !editableContent(tree), !permissionRequest(tree),
+              NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable,
+              signing(URL(fileURLWithPath: owner.applicationPath), requirement: "anchor apple") else { return }
+        let observation = Observation(binding: binding, launcherPID: launch.launcherPID,
+            capturedUTC: ISO8601DateFormatter().string(from: Date()), ownedProcesses: owned,
+            windows: [Window(owner: owner, tree: tree, screenshot: "", windowID: nil)],
+            unavailableOwners: [], limited: false, complete: false,
+            interpretation: "Rejected first-open tree; filtered diagnostic only. No Open action or runtime acceptance.")
+        try? write(observation, to: evidence.appendingPathComponent("confirmation.json"))
+    }
+
     private func openNormalConfirmation(_ binding: Binding, _ launch: Launch) throws {
         guard normalOpenAllowed, !normalOpenAttempted, !stopRequested else { return }
         guard preflightConsentWindowsAbsent else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
@@ -331,7 +345,10 @@ final class ObserverTests: XCTestCase {
         let window = windows[0]
         var budget = 1024
         let tree = safeTree(try window.snapshot(), budget: &budget)
-        guard normalOpenConfirmation(tree) else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
+        guard normalOpenConfirmation(tree) else {
+            recordRejectedConfirmation(tree, owner: owner, owned: owned, binding: binding, launch: launch)
+            throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
+        }
         let buttons = window.descendants(matching: .button)
         let open = buttons.matching(NSPredicate(format: "label == %@ OR title == %@", "Open", "Open"))
         guard buttons.count == 2, open.count == 1, open.element.isEnabled,

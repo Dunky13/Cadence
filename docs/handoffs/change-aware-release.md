@@ -318,6 +318,47 @@ regression fails against the old controller; the precise-HOLD export regression
 fails against the old collector. These local checks do not establish the
 quarantined hosted installation or normal Open outcome.
 
+## Hosted dialog discovery and remaining policy rejection
+
+[Run 41109516102](https://github.com/Dunky13/Cadence/actions/runs/41109516102)
+on `ea33845e4d1c0a2163ffcb80ebfa916ef5299654` fails both native jobs.
+Both now resolve an `alert` Dialog at the confirmation snapshot, proving the
+window-only discovery defect and the repaired discovery on these runners.
+They then reject its filtered tree with `UnknownFirstOpenHOLD` before the
+button query or Open action. Teardown, collection and broker exits are zero;
+product startup times out without the required PNG. The repaired exporter
+retains the precise HOLD rather than the generic unwind fallback.
+
+All four archive digests match GitHub metadata. Both decrypted client logs
+match the retained bootstrap fingerprints:
+
+| Runner | Bytes | SHA-256 |
+| --- | ---: | --- |
+| arm64 | 30607 | `3dc6aa826a4ac68c6e6bad6239af6cf326618ce4f85fbd753980098702ac5565` |
+| Intel | 30136 | `dc682cd8394d9dfadd968a4a64cfb45b176138f9ced243eb5dd815b4499d6bc2` |
+
+The next increment captures the exact rejected filtered tree as optional
+`confirmation.json`, using the existing nonce-bound observation schema and
+attachment export, plus one exact upload path in each consumer workflow.
+It records no pixels, identifiers or editable values, and refuses editable,
+authority-request or truncated trees. The owner executable and Apple signature
+are rechecked before retention. The record is explicitly incomplete and cannot
+qualify startup or trigger an action. Recording failure leaves the original
+policy rejection intact. No confirmation allowlist, timeout, consent authority,
+sandbox setting or product code is changed. The actual text mismatch must be
+read from repaired-head evidence before changing the policy.
+
+Focused checks cover filtered retention at the rejecting controller call site,
+refusal of unsafe trees/changed owners/bad signatures, optional write failure,
+nonce/schema/name/export rejection and the exact updated upload allowlist.
+The sandbox-preserving QA build and focused checks pass: first-open 39,
+capture 22, export 25, attachment 27, lifecycle 75, bootstrap/privacy 139 and
+workflow 110 cases, plus Bash syntax, ShellCheck, actionlint and whitespace.
+Full product tests
+and native app build passed at the preceding executable candidate; product and
+release-selection code are unchanged in this diagnostic increment. Hosted
+confirmation evidence and the actual Open/PNG outcome remain HOLD.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,

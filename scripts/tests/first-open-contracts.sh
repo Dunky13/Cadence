@@ -27,7 +27,7 @@ struct XCUIElement {
         if scenario == "stop-during-final-query" && snapshots > 1 { requestedStop = true }
         let prompt = "“Cadence.app” is an app downloaded from the Internet. Are you sure you want to open it?"
         var labels = [prompt]
-        if scenario == "warning" || (scenario == "changed-tree" && snapshots > 1) { labels += ["Apple could not verify it is free of malware."] }
+        if (scenario == "warning" || scenario == "diagnostic-write-failure") || (scenario == "changed-tree" && snapshots > 1) { labels += ["Apple could not verify it is free of malware."] }
         return XCUIElementSnapshot(elementType: .dialog, label: "", title: "", children:
             labels.map { XCUIElementSnapshot(elementType: .staticText, label: $0, title: "", children: []) } +
             ["Cancel", "Open"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) })
@@ -67,8 +67,8 @@ struct Harness {
     var stopRequested: Bool { scenario == "stop-before-controller" || requestedStop }
 SWIFT
 awk '
-    /^    struct (Binding|Launch|OwnedProcess|Owner|Node)[: ]/ ||
-    /^    private func (systemSurfaces|safeTree|permissionRequest|editableContent|normalOpenConfirmation|openNormalConfirmation)\(/ {
+    /^    struct (Binding|Launch|OwnedProcess|Owner|Node|Window|Observation)[: ]/ ||
+    /^    private func (systemSurfaces|safeTree|permissionRequest|editableContent|normalOpenConfirmation|recordRejectedConfirmation|openNormalConfirmation)\(/ {
         if ($0 ~ /} *$/) { print; next }
         copy=1
     }
@@ -97,11 +97,14 @@ cat >> "$work/controller.swift" <<'SWIFT'
         return Array(repeating: owner, count: scenario == "multiple-owners" ? 2 : 1)
     }
     private func signing(_ url: URL, requirement: String) -> Bool { scenario != "invalid-owner-signature" }
-    private func write<T: Encodable>(_ value: T, to url: URL) throws { try JSONEncoder().encode(value).write(to: url) }
+    private func write<T: Encodable>(_ value: T, to url: URL) throws {
+        if scenario == "diagnostic-write-failure" { throw NSError(domain: "SyntheticWriteFailure", code: 1) }
+        try JSONEncoder().encode(value).write(to: url)
+    }
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
         let accepted = ["normal", "dialog-surface", "alert-surface", "sheet-surface"]
-        let rejected = ["too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
+        let rejected = ["diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
         let noAction = ["missing-surface", "disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
         for name in accepted + rejected + noAction {
             scenario = name; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false
@@ -114,6 +117,11 @@ cat >> "$work/controller.swift" <<'SWIFT'
                 precondition(clicks == (accepted.contains(name) ? 1 : 0), "Unexpected/repeated UI action: \(name)")
             } catch {
                 precondition(rejected.contains(name) && clicks == 0, "Unexpected error or unsafe action: \(name)")
+                if name == "warning" {
+                    let record = try JSONDecoder().decode(Observation.self, from: Data(contentsOf: evidence.appendingPathComponent("confirmation.json")))
+                    precondition(!record.complete && record.ownedProcesses.count == 1 && record.windows.count == 1)
+                    precondition(record.windows[0].tree.children.contains { $0.label.contains("could not verify") }, "Rejected call site lost its filtered tree")
+                }
             }
         }
         scenario = "missing-surface"; normalOpenAttempted = false; clicks = 0; requestedStop = false
@@ -122,7 +130,31 @@ cat >> "$work/controller.swift" <<'SWIFT'
         scenario = "dialog-surface"
         try openNormalConfirmation(binding, Launch(launcherPID: 900))
         precondition(clicks == 1 && normalOpenAttempted, "Late accessibility surface never retried")
-        print("First-open controller: \(accepted.count + rejected.count + noAction.count + 1) inert exact-production contracts passed; no actual UI action.")
+        let owner = Owner(pid: 100, bundleID: "com.apple.coreservices.uiagent",
+            executable: "/System/Library/CoreServices/CoreServicesUIAgent.app/Contents/MacOS/CoreServicesUIAgent",
+            applicationPath: "/System/Library/CoreServices/CoreServicesUIAgent.app")
+        let owned = [OwnedProcess(pid: 800, executable: "verified", state: "T")]
+        let safe = Node(type: XCUIElement.ElementType.dialog.rawValue, label: "SYNTHETIC unsupported confirmation", title: "", children: [], truncated: false)
+        let unsafe = [
+            Node(type: safe.type, label: safe.label, title: "", children: [], truncated: true),
+            Node(type: safe.type, label: "authentication required", title: "", children: [], truncated: false),
+            Node(type: XCUIElement.ElementType.textField.rawValue, label: "EXCLUDED editable value", title: "", children: [], truncated: false),
+            Node(type: XCUIElement.ElementType.secureTextField.rawValue, label: "EXCLUDED secure value", title: "", children: [], truncated: false)
+        ]
+        let output = evidence.appendingPathComponent("confirmation.json")
+        for (name, tree) in [("normal", safe), ("changed-owner", safe), ("invalid-owner-signature", safe), ("diagnostic-write-failure", safe)] + unsafe.map({ ("unsafe-tree", $0) }) {
+            if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
+            scenario = name; clicks = 0
+            recordRejectedConfirmation(tree, owner: owner, owned: owned, binding: binding, launch: Launch(launcherPID: 900))
+            let exists = FileManager.default.fileExists(atPath: output.path)
+            precondition(exists == (name == "normal") && clicks == 0, "Unsafe diagnostic retained or Open attempted")
+            if exists {
+                let record = try JSONDecoder().decode(Observation.self, from: Data(contentsOf: output))
+                precondition(!record.complete && !record.limited && record.windows.count == 1 && record.windows[0].tree == safe)
+                precondition(record.windows[0].screenshot.isEmpty && record.windows[0].windowID == nil && record.binding.observationID == binding.observationID)
+            }
+        }
+        print("First-open controller: \(accepted.count + rejected.count + noAction.count + 9) inert exact-production contracts passed; no actual UI action.")
     }
 }
 @main struct Main {

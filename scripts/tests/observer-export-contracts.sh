@@ -76,4 +76,17 @@ for order in forward reverse; do
     invoke; [[ $result == 0 ]]
     grep -qx 'HOLD: UnknownFirstOpenHOLD; normal Open attempted=false; no permission grant.' "$fixture/evidence/session.txt"
 done
+new_confirmation() {
+    new_case
+    mutate '.[0].attachments[0].suggestedHumanReadableName |= sub("stage-0";"confirmation")'
+    jq -n --arg nonce "$nonce" '{binding:{bundleID:"dev.cadence.app",teamID:"SYNTHETIC0",version:"0.2.0",build:"15",executableSHA256:"synthetic",copiedPath:"/copied/Cadence.app",snapshotPath:"/unique/startup.png",observationID:$nonce},launcherPID:900,capturedUTC:"2026-10-30T00:00:00Z",ownedProcesses:[],windows:[],unavailableOwners:[],limited:false,complete:false,interpretation:"Synthetic diagnostic only"}' > "$fixture/export/first.json"
+}
+new_confirmation; invoke; [[ $result == 0 ]]
+jq -e '.complete==false and .binding.observationID=="AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"' "$fixture/evidence/confirmation.json" >/dev/null
+for change in '.binding.observationID="BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"' '.environment="EXCLUDED"' 'del(.complete)' '.windows="invalid"'; do
+    new_confirmation
+    jq "$change" "$fixture/export/first.json" > "$fixture/changed.json"; mv "$fixture/changed.json" "$fixture/export/first.json"
+    invoke; check_failure
+done
+new_confirmation; mutate '.[0].attachments += [.[0].attachments[0]]'; invoke; check_failure
 printf '%s observer export contracts passed; unrelated/private artifacts excluded.\n' "$cases"

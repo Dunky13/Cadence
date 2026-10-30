@@ -59,7 +59,7 @@ for my $test (@$manifest) {
         my $human = $item->{suggestedHumanReadableName};
         next unless $human =~ /^CadenceObserver-/;
         die "Foreign observer attachment\n" unless ($test->{testIdentifier} // '') eq 'ObserverTests/testObserveExistingLaunch()' &&
-            $human =~ /^CadenceObserver-\Q$nonce\E-(stage-[0-7]|session|first-open|observation-[0-2]|system-[0-2]-[1-9][0-9]*-[0-7])_[0-9]+_[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}\.(json|txt|png)$/;
+            $human =~ /^CadenceObserver-\Q$nonce\E-(stage-[0-7]|session|first-open|confirmation|observation-[0-2]|system-[0-2]-[1-9][0-9]*-[0-7])_[0-9]+_[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}\.(json|txt|png)$/;
         my ($stem, $extension) = ($1, $2);
         my $expected = $stem eq 'session' ? 'txt' : ($stem =~ /^system-/ ? 'png' : 'json');
         die "Unexpected attachment type\n" unless $extension eq $expected;
