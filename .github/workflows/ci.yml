@@ -49,8 +49,44 @@ jobs:
           ref: ${{ inputs.source_sha || github.sha }}
       - name: Install validation tools
         run: brew install actionlint shellcheck jq
+      # Immutable public fixture: exercise the release scripts before they reach
+      # main. This job has no signing environment, secrets, or write permissions.
+      - name: Verify existing public release through native first-open and demo startup
+        env:
+          RELEASE_TAG: v0.2.0
+          SOURCE_COMMIT: 850f8c219bdb094e324a3d47e27ff0dfb21ca103
+          EXPECTED_TEAM_ID: U9GXK89565
+          EXPECTED_NATIVE_ARCH: ${{ matrix.arch }}
+          LAUNCH_UI_ALLOW_NORMAL_OPEN: 'true'
+          LAUNCH_UI_BUILD_DIR: ${{ runner.temp }}/public-launch-ui-build
+          INSTALL_EVIDENCE_DIR: ${{ runner.temp }}/consumer-evidence
+          LAUNCH_UI_EVIDENCE_DIR: ${{ runner.temp }}/launch-ui-evidence
+        run: |
+          ./scripts/build-launch-ui-observer.sh "$LAUNCH_UI_BUILD_DIR"
+          ./scripts/verify-public-install.sh
       - name: Validate workflows, failure contracts, real LaunchAgents, and native build
         run: ./scripts/ci.sh
+      - name: Retain native public installation regression evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Cadence-CI-Consumer-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/consumer-evidence/*
+            ${{ runner.temp }}/launch-ui-evidence/status.json
+            ${{ runner.temp }}/launch-ui-evidence/preflight.json
+            ${{ runner.temp }}/launch-ui-evidence/bootstrap.json
+            ${{ runner.temp }}/launch-ui-evidence/binding.json
+            ${{ runner.temp }}/launch-ui-evidence/session.txt
+            ${{ runner.temp }}/launch-ui-evidence/session-stage.json
+            ${{ runner.temp }}/launch-ui-evidence/first-open.json
+            ${{ runner.temp }}/launch-ui-evidence/confirmation.json
+            ${{ runner.temp }}/launch-ui-evidence/observation-0.json
+            ${{ runner.temp }}/launch-ui-evidence/observation-1.json
+            ${{ runner.temp }}/launch-ui-evidence/observation-2.json
+            ${{ runner.temp }}/launch-ui-evidence/system-*.png
+          if-no-files-found: warn
+          retention-days: 14
 
   universal:
     name: Universal app and drag-and-drop installer

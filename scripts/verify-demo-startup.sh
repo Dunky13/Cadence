@@ -22,7 +22,7 @@ cleanup() {
     trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
     if declare -F launch_ui_finish >/dev/null; then
         if ! launch_ui_finish "$result"; then
-            printf 'UI observer owned teardown failed; qualification is held.\n' >&2
+            printf 'UI observer qualification failed; inspect test, export and teardown status.\n' >&2
             if [[ $result == 0 ]]; then result=1; fi
         fi
     fi
@@ -43,7 +43,21 @@ cleanup() {
             fi
         fi
     done < <(ps -axo pid=,comm=)
-    if [[ -n $launcher ]]; then kill "$launcher" 2>/dev/null || true; wait "$launcher" 2>/dev/null || true; fi
+    if [[ -n $launcher ]]; then
+        if [[ ${observer_ready:-false} == true ]]; then
+            if ! launch_ui_stop_product; then
+                observer_cleanup_failed=true
+                if [[ $result == 0 ]]; then result=1; fi
+            fi
+        else kill "$launcher" 2>/dev/null || true; wait "$launcher" 2>/dev/null || true; fi
+    fi
+    if [[ ${observer_ready:-false} == true && -n ${observer_product_supervisor:-} ]]; then
+        if ! "$observer_launcher_verifier" cleanup "$observer_control" "$observer_product_supervisor"; then
+            observer_cleanup_failed=true
+            if [[ $result == 0 ]]; then result=1; fi
+            printf 'Owned LaunchServices child cleanup could not be verified.\n' >&2
+        fi
+    fi
     if [[ ${observer_cleanup_failed:-false} == true ]]; then
         printf 'Preserved private observer control for unverified teardown: %s\n' "$work" >&2
     else
@@ -58,7 +72,16 @@ trap 'exit 143' TERM
 spctl --assess --type execute --verbose=4 "$app"
 launch_ui_prepare "$app" "$work" || printf 'UI observer preparation unavailable; ordinary launch proceeds.\n' >&2
 [[ ${observer_cleanup_failed:-false} != true ]] || exit 1
-open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
+if [[ ${LAUNCH_UI_ALLOW_NORMAL_OPEN:-false} == true && ${observer_ready:-false} != true ]]; then
+    printf 'Verified first-open controller did not establish readiness.\n' >&2
+    exit 1
+fi
+if [[ ${observer_ready:-false} == true ]]; then
+    "$observer_launcher_verifier" launch "$observer_control" &
+else
+    # Pin argv[0] as well as the executable used by the exact launcher checks.
+    /usr/bin/open -n -W "$app" --args --demo --snapshot "$work/startup.png" &
+fi
 launcher=$!
 diagnostic_launcher=$launcher
 launch_ui_attach "$launcher" || printf 'UI observer launch binding unavailable; original launch result preserved.\n' >&2

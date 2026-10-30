@@ -12,6 +12,39 @@ emit() { printf '%s=%s\n' "$1" "$2"; if [[ -n ${GITHUB_OUTPUT:-} ]]; then printf
 gh api "repos/$repo" > "$work/repo.json"
 repo_id=$(jq -er '.id | select(type == "number" and . > 0)' "$work/repo.json")
 [[ $(jq -r .default_branch "$work/repo.json") == main ]] || fail 'Unexpected default branch.'
+# Automatic runs attempt each automation commit once, even if qualification
+# failed. A fresh no-input dispatch is the explicit recovery path. Check before
+# reading candidate custody so a failed consumer cannot cause daily retries.
+if [[ ${GITHUB_EVENT_NAME:-} == schedule || ${GITHUB_EVENT_NAME:-} == workflow_run ]]; then
+    [[ ${GITHUB_SHA:-} =~ ^[0-9a-f]{40}$ && ${GITHUB_RUN_ID:-} =~ ^[1-9][0-9]*$ &&
+        ${GITHUB_RUN_NUMBER:-} =~ ^[1-9][0-9]*$ ]] || fail 'Missing automatic run identity.'
+    gh api --paginate --slurp "repos/$repo/actions/workflows/release.yml/runs?head_sha=$GITHUB_SHA&per_page=100" > "$work/release-runs.json"
+    jq -e 'type == "array" and all(.[]; (.workflow_runs | type == "array"))' "$work/release-runs.json" >/dev/null \
+        || fail 'Malformed release run inventory.'
+    jq -r --arg repo "$repo" --argjson repo_id "$repo_id" --arg sha "$GITHUB_SHA" \
+        --argjson current "$GITHUB_RUN_ID" --argjson order "$GITHUB_RUN_NUMBER" '
+        .[].workflow_runs[] | select(
+            .path == ".github/workflows/release.yml" and .head_branch == "main"
+            and .repository.full_name == $repo and .head_repository.id == $repo_id
+            and .head_sha == $sha and .id != $current and .run_number < $order
+            and .conclusion != "skipped"
+            and (.event == "workflow_run" or .event == "schedule" or .event == "workflow_dispatch")) | .id' "$work/release-runs.json" > "$work/prior-runs"
+    while IFS= read -r prior; do
+        [[ $prior =~ ^[1-9][0-9]*$ ]] || fail 'Invalid prior run identity.'
+        gh api --paginate --slurp "repos/$repo/actions/runs/$prior/jobs?filter=latest&per_page=100" > "$work/prior-jobs.json"
+        jq -e 'type == "array" and all(.[]; (.jobs | type == "array"))' "$work/prior-jobs.json" >/dev/null \
+            || fail 'Malformed prior job inventory.'
+        # A preflight-only no-op/failure while CI was still running did not
+        # attempt this commit. Do not suppress its later successful CI event.
+        if jq -e 'any(.[].jobs[];
+            (.name | startswith("Sign or resume exact universal candidate / "))
+            and .status == "completed" and .conclusion != "skipped")' "$work/prior-jobs.json" >/dev/null; then
+            printf 'This commit already had a release attempt; use manual dispatch for an intentional retry.\n' >&2
+            emit eligible false
+            exit 0
+        fi
+    done < "$work/prior-runs"
+fi
 gh api "repos/$repo/branches/main" > "$work/main.json"
 jq -e '.protected == true' "$work/main.json" >/dev/null || fail 'Trusted-main automation requires enforced main protection. No release started.'
 gh api --paginate --slurp "repos/$repo/actions/artifacts?per_page=100" > "$work/artifacts.json"
