@@ -11,6 +11,7 @@ var clicks = 0
 var snapshots = 0
 var processQueries = 0
 var requestedStop = false
+var noticeReads = 0
 struct XCUIElementSnapshot {
     let elementType: XCUIElement.ElementType
     let label, title: String
@@ -18,14 +19,37 @@ struct XCUIElementSnapshot {
     var value: Any? = nil
 }
 struct XCUIElement {
-    enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox, menuBar }
+    enum ElementType: UInt { case any = 0, window = 4, sheet = 5, alert = 7, dialog = 8, button = 9, comboBox = 15, image = 43, staticText = 48, textField = 49, secureTextField = 50, textView = 52, menuBar = 55 }
     var elementType: ElementType {
-        scenario == "dialog-surface" ? .dialog : (scenario == "alert-surface" ? .alert : (scenario == "sheet-surface" ? .sheet : .window))
+        (scenario == "dialog-surface" || scenario.hasPrefix("native-")) ? .dialog : (scenario == "alert-surface" ? .alert : (scenario == "sheet-surface" ? .sheet : .window))
     }
-    var isEnabled: Bool { scenario != "disabled-button" }
+    var actionName: String? = nil
+    var isEnabled: Bool { scenario != "disabled-button" && scenario != "native-disabled-open" }
     func snapshot() throws -> XCUIElementSnapshot {
         snapshots += 1
         if scenario == "stop-during-final-query" && snapshots > 1 { requestedStop = true }
+        if scenario.hasPrefix("native-") {
+            let node = try JSONDecoder().decode(Harness.Node.self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2])))
+            func convert(_ node: Harness.Node) -> XCUIElementSnapshot {
+                guard let type = ElementType(rawValue: node.type) else { preconditionFailure("Unknown fixture type") }
+                var label = node.label
+                var title = node.title
+                var value = node.staticText
+                var children = node.children.map(convert)
+                if type == .dialog {
+                    if scenario == "native-unknown-root" { label = "unknown" }
+                    if scenario == "native-root-title" { title = "Unknown warning" }
+                    if scenario == "native-extra-button" { children.append(XCUIElementSnapshot(elementType: .button, label: "Open Anyway", title: "", children: [])) }
+                }
+                if type == .staticText, let text = value {
+                    if scenario == "native-warning" { value = text + " Apple could not verify this app." }
+                    if scenario == "native-other-agent" { value = text.replacingOccurrences(of: "CadenceReleaseVerification", with: "OtherAgent") }
+                    if scenario == "native-changed-tree" && snapshots > 1 { value = text + " Changed warning" }
+                }
+                return XCUIElementSnapshot(elementType: type, label: label, title: title, children: children, value: value)
+            }
+            return convert(node)
+        }
         let prompt = "“Cadence.app” is an app downloaded from the Internet. Are you sure you want to open it?"
         var labels = [prompt]
         if (scenario == "warning" || scenario == "diagnostic-write-failure") || (scenario == "changed-tree" && snapshots > 1) { labels += ["Apple could not verify it is free of malware."] }
@@ -42,13 +66,21 @@ struct XCUIElement {
             valueWarning + ["Cancel", "Open"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) })
     }
     func descendants(matching: ElementType) -> Query { Query(isOpen: false) }
-    func click() { clicks += 1 }
+    func click() { precondition(actionName == "Open", "Non-Open action attempted"); clicks += 1 }
 }
 struct Query {
     let isOpen: Bool
-    var count: Int { isOpen ? (scenario == "duplicate-open" ? 2 : 1) : 2 }
-    var element: XCUIElement { XCUIElement() }
-    func matching(_ predicate: NSPredicate) -> Query { Query(isOpen: true) }
+    var count: Int {
+        if isOpen { return ["duplicate-open", "native-duplicate-open"].contains(scenario) ? 2 : 1 }
+        if ["native-extra-query-button", "native-extra-button"].contains(scenario) { return 4 }
+        return scenario.hasPrefix("native-") ? 3 : 2
+    }
+    var element: XCUIElement { XCUIElement(actionName: isOpen ? "Open" : "unfiltered") }
+    func matching(_ predicate: NSPredicate) -> Query {
+        precondition(predicate.evaluate(with: ["label":"Open", "title":""]) && predicate.evaluate(with: ["label":"", "title":"Open"]))
+        precondition(!predicate.evaluate(with: ["label":"Help", "title":""]) && !predicate.evaluate(with: ["label":"", "title":"Cancel"]))
+        return Query(isOpen: true)
+    }
 }
 struct XCUIApplication {
     init(url: URL) {}
@@ -85,6 +117,12 @@ awk '
     copy && /^    }$/ { copy=0 }
 ' "$root/qa/LaunchUIObserver/ObserverTests.swift" | sed 's/private func openNormalConfirmation/mutating private func openNormalConfirmation/' >> "$work/controller.swift"
 cat >> "$work/controller.swift" <<'SWIFT'
+    private func expectedDownloadNotice(_ app: URL) -> String? {
+        noticeReads += 1
+        if scenario == "native-missing-metadata" || (scenario == "native-changed-metadata" && noticeReads > 1) { return nil }
+        if scenario == "native-wrong-time" { return "CadenceReleaseVerification downloaded this file today at 7:31 PM. Apple checked it for malicious software and none was detected." }
+        return "CadenceReleaseVerification downloaded this file today at 7:32 PM. Apple checked it for malicious software and none was detected."
+    }
     private func validCandidate(_ app: URL, _ binding: Binding) -> Bool { scenario != "wrong-candidate" }
     private func ownedProcesses(_ binding: Binding) throws -> [OwnedProcess] {
         processQueries += 1
@@ -112,11 +150,11 @@ cat >> "$work/controller.swift" <<'SWIFT'
     }
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
-        let accepted = ["value-only-text", "normal", "dialog-surface", "alert-surface", "sheet-surface"]
-        let rejected = ["changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
+        let accepted = ["native-profile", "value-only-text", "normal", "dialog-surface", "alert-surface", "sheet-surface"]
+        let rejected = ["native-missing-metadata", "native-wrong-time", "native-changed-metadata", "native-extra-query-button", "native-duplicate-open", "native-disabled-open", "native-changed-tree", "native-unknown-root", "native-root-title", "native-extra-button", "native-warning", "native-other-agent", "changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
         let noAction = ["missing-surface", "disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
         for name in accepted + rejected + noAction {
-            scenario = name; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false
+            scenario = name; noticeReads = 0; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false
             // Model capture finishing after the parent has requested teardown.
             if name == "stop-during-capture" { requestedStop = true }
             do {
@@ -175,4 +213,4 @@ cat >> "$work/controller.swift" <<'SWIFT'
 }
 SWIFT
 swiftc -swift-version 5 -parse-as-library "$work/controller.swift" -o "$work/controller"
-"$work/controller" "$work"
+"$work/controller" "$work" "$root/scripts/tests/fixtures/NativeFirstOpen.json"

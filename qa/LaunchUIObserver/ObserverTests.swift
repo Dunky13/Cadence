@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import CryptoKit
 import Security
 import ScreenCaptureKit
@@ -280,7 +281,30 @@ final class ObserverTests: XCTestCase {
         return editable.contains { $0.rawValue == node.type } || node.children.contains(where: editableContent)
     }
 
-    private func normalOpenConfirmation(_ node: Node) -> Bool {
+    private func downloadNotice(_ properties: [String: Any]?, now: Date = Date(), timeZone: TimeZone = .current) -> String? {
+        guard let properties,
+              properties[kLSQuarantineAgentNameKey as String] as? String == "CadenceReleaseVerification",
+              let timestamp = properties[kLSQuarantineTimeStampKey as String] as? Date,
+              timestamp.timeIntervalSince1970.isFinite, timestamp.timeIntervalSince1970 > 0,
+              timestamp <= now else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        guard calendar.isDate(timestamp, inSameDayAs: now) else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "h:mm a"
+        return "CadenceReleaseVerification downloaded this file today at \(formatter.string(from: timestamp)). Apple checked it for malicious software and none was detected."
+    }
+
+    private func expectedDownloadNotice(_ app: URL, now: Date = Date(), timeZone: TimeZone = .current) -> String? {
+        var fresh = app
+        fresh.removeCachedResourceValue(forKey: .quarantinePropertiesKey)
+        guard let values = try? fresh.resourceValues(forKeys: [.quarantinePropertiesKey]) else { return nil }
+        return downloadNotice(values.quarantineProperties, now: now, timeZone: timeZone)
+    }
+
+    private func normalOpenConfirmation(_ node: Node, expectedDownloadNotice: String? = nil) -> Bool {
         guard !node.truncated, !permissionRequest(node), !editableContent(node) else { return false }
         func normalized(_ text: String) -> String {
             text.replacingOccurrences(of: "“", with: "\"")
@@ -291,10 +315,30 @@ final class ObserverTests: XCTestCase {
         let all = nodes(node)
         let buttons = all.filter { $0.type == XCUIElement.ElementType.button.rawValue }
             .map { normalized($0.label.isEmpty ? $0.title : $0.label) }.sorted()
-        guard buttons == ["Cancel", "Open"] else { return false }
         let prompts = ["Cadence", "Cadence.app"].map {
             "\"\($0)\" is an app downloaded from the Internet. Are you sure you want to open it?"
         }
+        if buttons == ["Cancel", "Help", "Open"] {
+            // Closed profile observed on the native public-install runner. Help
+            // is passive; the sole action below still targets exactly Open.
+            guard let expectedDownloadNotice,
+                  node.type == XCUIElement.ElementType.dialog.rawValue, node.label == "alert", node.title.isEmpty, node.staticText == nil,
+                  node.children.map(\.type) == [XCUIElement.ElementType.image.rawValue, XCUIElement.ElementType.staticText.rawValue,
+                    XCUIElement.ElementType.staticText.rawValue, XCUIElement.ElementType.button.rawValue,
+                    XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.button.rawValue],
+                  node.children.allSatisfy({ $0.children.isEmpty && !$0.truncated }) else { return false }
+            let parts = node.children
+            guard parts[0].label.isEmpty, parts[0].title.isEmpty, parts[0].staticText == nil,
+                  parts[1].label.isEmpty, parts[1].title.isEmpty, let prompt = parts[1].staticText,
+                  prompts.contains(normalized(prompt)),
+                  parts[2].label.isEmpty, parts[2].title.isEmpty, let notice = parts[2].staticText,
+                  normalized(notice) == normalized(expectedDownloadNotice),
+                  parts[3].label == "Help", parts[3].title.isEmpty, parts[3].staticText == nil,
+                  parts[4].label.isEmpty, parts[4].title == "Cancel", parts[4].staticText == nil,
+                  parts[5].label.isEmpty, parts[5].title == "Open", parts[5].staticText == nil else { return false }
+            return true
+        }
+        guard buttons == ["Cancel", "Open"] else { return false }
         let labels = Set(all.flatMap { [normalized($0.label), normalized($0.title), normalized($0.staticText ?? "")] }.filter { !$0.isEmpty })
         let allowed = Set(prompts + ["Cancel", "Open", "Cadence", "Cadence.app",
             "Apple checked it for malicious software and none was detected."])
@@ -355,20 +399,26 @@ final class ObserverTests: XCTestCase {
         let window = windows[0]
         var budget = 1024
         let tree = safeTree(try window.snapshot(), budget: &budget, staticTextValues: true)
-        guard normalOpenConfirmation(tree) else {
+        let app = URL(fileURLWithPath: binding.copiedPath)
+        let notice = expectedDownloadNotice(app)
+        guard normalOpenConfirmation(tree, expectedDownloadNotice: notice) else {
             recordRejectedConfirmation(tree, owner: owner, owned: owned, binding: binding, launch: launch)
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
         }
         let buttons = window.descendants(matching: .button)
         let open = buttons.matching(NSPredicate(format: "label == %@ OR title == %@", "Open", "Open"))
-        guard buttons.count == 2, open.count == 1, open.element.isEnabled,
+        func buttonCount(_ node: Node) -> Int {
+            (node.type == XCUIElement.ElementType.button.rawValue ? 1 : 0) + node.children.map(buttonCount).reduce(0, +)
+        }
+        guard buttons.count == buttonCount(tree), open.count == 1, open.element.isEnabled,
               NSRunningApplication(processIdentifier: owner.pid)?.executableURL?.path == owner.executable,
               signing(URL(fileURLWithPath: owner.applicationPath), requirement: "anchor apple"),
               try ownedProcesses(binding).map(\.pid) == owned.map(\.pid) else {
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
         }
         budget = 1024
-        guard safeTree(try window.snapshot(), budget: &budget, staticTextValues: true) == tree else {
+        guard safeTree(try window.snapshot(), budget: &budget, staticTextValues: true) == tree,
+              expectedDownloadNotice(app) == notice else {
             throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
         }
         guard !stopRequested else { return }

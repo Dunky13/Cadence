@@ -17,8 +17,9 @@ The user authorized one narrowly verified normal Cadence first-open Open action.
 The controller requires exact public app identity, one owned stopped product and
 snapshot arguments, its exact LaunchServices launcher, no competing Cadence or
 pre-existing consent window, a unique Apple-signed system owner, complete normal
-allowlisted text, and exactly Cancel/Open buttons. Unknown dialogs and warnings
-fail. Stop is checked at entry, after awaited capture and immediately before the
+allowlisted text and the exact Cancel/Open action pair. The observed native
+profile additionally requires one passive Help control in a closed tree shape;
+Help is never selected. Unknown dialogs, controls and warnings fail. Stop is checked at entry, after awaited capture and immediately before the
 click. The original thirty-second demo snapshot requirement remains.
 
 ## Proven bootstrap failure and repair
@@ -405,6 +406,64 @@ temporary encrypted raw-log helper, recipient certificate, CI flag, caller and
 uploader are removed. A pinned negative contract prevents their accidental
 return. Existing protected keys and private evidence retain their ownership;
 no provider artifact or credential was changed or deleted.
+
+## Strict observed native profile and quarantine-bound footer
+
+The Intel failure in [run 41115906962](https://github.com/Dunky13/Cadence/actions/runs/41115906962)
+at `be9a832b9150938cec24d5dff8454db499664dd6` now includes complete immutable
+text. Its archive SHA-256 matches GitHub metadata:
+`1b2e49a6c3cb4dcd516d362f36c83839e5dd0cf9b78af2162e759fdec36404cf`.
+The question is the expected Cadence Internet-download confirmation. The footer
+states that `CadenceReleaseVerification` downloaded the file today at 7:32 PM,
+followed by Apple's exact statement that malicious software was not detected.
+The copied app's quarantine timestamp `6ae4f0d1` is
+2026-10-30T19:32:33Z, binding that displayed minute to the installed candidate.
+Arm64 later completed with the identical tree except for its own 7:37 PM
+footer minute. Its quarantine timestamp `6ae4f1ea` is
+2026-10-30T19:37:14Z, and its archive SHA-256 also verifies:
+`bb0d7df8152f0cdcd525341ef7b0be3222bc6e97fb2aba3b315bb69b8926b4d4`.
+Both architectures therefore provide complete observed-profile evidence, but
+neither establishes actual Open/PNG acceptance on the repaired candidate.
+
+A sanitized [native tree fixture](../../scripts/tests/fixtures/NativeFirstOpen.json)
+contains only the observed role/text/control structure, without process IDs,
+user paths or pixels. The old production controller rejects that fixture;
+the new controller accepts it only with matching trusted quarantine context.
+It adds one closed profile: Dialog root `alert` with no title, one empty image,
+two immutable static-text leaves, then exactly Help, Cancel and Open leaves
+with their observed label/title placement. Every leaf must be complete and
+childless. The question must match the existing Cadence/Cadence.app prompts.
+The entire footer must equal the expected notice derived from the copied app,
+including its downloader and displayed minute. Unknown text, reordered/extra
+controls, missing content, warnings and permission UI remain refusal cases.
+The legacy Cancel/Open profile remains unchanged.
+
+The metadata reader uses Foundation's quarantine-properties API, validates the
+exact `CadenceReleaseVerification` agent and a finite positive Date that is not
+in the future, and supports only the observed same-day English notice. It
+formats that timestamp in the current time zone and clears the URL's metadata
+cache before each read. It never changes quarantine. Metadata is read again
+before the click; changed context holds qualification. An unsupported date or
+unavailable context cannot qualify the new profile. No guessed origin strings,
+wildcard suffix or arbitrary button exclusion is used.
+
+The live button query must equal the button count of the already validated
+closed tree, with one enabled exact Open match. Help is never clicked. Final
+tree equality, unchanged quarantine context, candidate/launcher/owner custody,
+unique stopped product and snapshot, cancellation and the once-only Open latch
+remain required. The original thirty-second product loop and all trust gates
+are unchanged. No permission setting, warning override or app activation is
+introduced.
+
+Focused checks pass: 58 exact-production inert controller cases, 64 filtering/
+profile cases and 15 actual-filesystem metadata/format/cache/preservation cases
+against an owned inert directory. The latter use the exact production metadata
+reader and show the quarantine attribute is unchanged after reading, and that
+changed agent/timestamp values are freshly read. The full local `scripts/ci.sh` suite passes on arm64/macOS 27.0.1/Xcode 27.1:
+59 Swift tests with real launchd integration, native app build, sandbox-preserving
+QA compile, static/workflow checks and all signing/recovery/publication contracts.
+Hosted Open, required native demo PNG and all aggregate/package gates remain
+HOLD until observed on the repaired head.
 
 ## Remaining gates and cleanup
 

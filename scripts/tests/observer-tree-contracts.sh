@@ -10,7 +10,7 @@ cat > "$work/policy.swift" <<'SWIFT'
 import Foundation
 import CoreGraphics
 enum XCUIElement {
-    enum ElementType: UInt { case window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }
+    enum ElementType: UInt { case any = 0, window = 4, sheet = 5, alert = 7, dialog = 8, button = 9, comboBox = 15, image = 43, staticText = 48, textField = 49, secureTextField = 50, textView = 52, menuBar = 55 }
 }
 var valueReads = 0
 struct XCUIElementSnapshot {
@@ -29,7 +29,7 @@ awk '
     copy && /^    }$/ { copy=0 }
 ' "$source_file" >> "$work/policy.swift"
 cat >> "$work/policy.swift" <<'SWIFT'
-    func run() {
+    func run() throws {
         var cases = 0
         func check(_ value: Bool, _ message: String) {
             precondition(value, message)
@@ -83,6 +83,43 @@ cat >> "$work/policy.swift" <<'SWIFT'
             let hidden = withValue(kind, "EXCLUDED editable value")
             check(hidden.staticText == nil && valueReads == 0 && hidden.label.isEmpty, "Editable value was read or retained")
         }
+        let native = try JSONDecoder().decode(Node.self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
+        let notice = "CadenceReleaseVerification downloaded this file today at 7:32 PM. Apple checked it for malicious software and none was detected."
+        check(normalOpenConfirmation(native, expectedDownloadNotice: notice), "Observed native profile rejected")
+        check(!normalOpenConfirmation(native), "Missing quarantine context accepted")
+        check(!normalOpenConfirmation(native, expectedDownloadNotice: notice.replacingOccurrences(of: "7:32", with: "7:31")), "Wrong bound timestamp accepted")
+        func changed(_ node: Node, type: UInt? = nil, label: String? = nil, title: String? = nil, children: [Node]? = nil, truncated: Bool? = nil) -> Node {
+            Node(type: type ?? node.type, label: label ?? node.label, title: title ?? node.title, children: children ?? node.children, truncated: truncated ?? node.truncated, staticText: node.staticText)
+        }
+        func text(_ node: Node, _ value: String?) -> Node {
+            Node(type: node.type, label: node.label, title: node.title, children: node.children, truncated: node.truncated, staticText: value)
+        }
+        func child(_ index: Int, _ node: Node) -> Node {
+            var children = native.children; children[index] = node
+            return changed(native, children: children)
+        }
+        let invalidNative = [
+            changed(native, type: XCUIElement.ElementType.window.rawValue),
+            changed(native, label: "other"), changed(native, title: "Unknown warning"), changed(native, truncated: true),
+            changed(native, children: Array(native.children.dropLast())),
+            changed(native, children: native.children + [native.children[3]]),
+            child(0, changed(native.children[0], label: "Unknown image label")),
+            child(1, changed(native.children[1], label: "Unknown label")),
+            child(1, changed(native.children[1], title: "Unknown title")),
+            child(1, text(native.children[1], nil)),
+            child(1, text(native.children[1], "Other.app is an app downloaded from the Internet.")),
+            child(2, text(native.children[2], nil)),
+            child(2, text(native.children[2], notice + " Unknown warning")),
+            child(2, text(native.children[2], notice.replacingOccurrences(of: "none was detected", with: "malware was detected"))),
+            child(2, text(native.children[2], notice.replacingOccurrences(of: "CadenceReleaseVerification", with: "OtherAgent"))),
+            child(2, changed(native.children[2], truncated: true)),
+            child(3, changed(native.children[3], label: "Allow")),
+            child(3, changed(native.children[3], title: "Open")),
+            child(4, changed(native.children[4], title: "Don't Allow")),
+            child(5, changed(native.children[5], title: "Open Anyway")),
+            child(5, changed(native.children[5], children: [oldButtonNodes[0]]))
+        ]
+        for modified in invalidNative { check(!normalOpenConfirmation(modified, expectedDownloadNotice: notice), "Unknown native variant accepted") }
         check(!normalOpenConfirmation(filtered(.dialog, "", "", Array(normalChildren.dropLast()))), "Missing Cancel accepted")
         for warning in ["Cadence.app will damage your computer.", "Apple could not verify it is free of malware.", "password", "Unrelated.app"] {
             let extra = XCUIElementSnapshot(elementType: .staticText, label: warning, title: "", children: [])
@@ -113,10 +150,10 @@ cat >> "$work/policy.swift" <<'SWIFT'
         print("Observer policy: \(cases) pure synthetic filtering/window-binding contracts passed; no native UI executed.")
     }
 }
-Harness().run()
+try Harness().run()
 SWIFT
 swiftc "$work/policy.swift" -o "$work/policy"
-"$work/policy"
+"$work/policy" "$root/scripts/tests/fixtures/NativeFirstOpen.json"
 # Regression tripwires for the demonstrated occlusion API and permission grants.
 if grep -Eq 'element\.screenshot\(|CGRequestScreenCaptureAccess\(' "$source_file"; then
     printf 'Observer reintroduced desktop-cropped pixels or an authorization request.\n' >&2
