@@ -223,7 +223,16 @@ launch_ui_prepare() {
         sleep 1
     done
     launch_ui_stop
-    launch_ui_status HOLD 'Native XCTest session did not establish readiness; no authentication or permission grant attempted.'
+    # Only fixed, nonce-bound progress can leave the private log. A stage is
+    # diagnostic; even "ready" never substitutes for the actual Ready frame.
+    local last_stage=unavailable stage
+    for stage in ready ownerPreflightReady ownerPreflightStarted screenSessionReady screenSessionStarted candidateVerified candidateCheckStarted protocolPathsReceived; do
+        if grep -qF "CadenceObserverStage:$observer_id:$stage:EndCadenceObserver" "$observer_control/xcode-private.log"; then
+            last_stage=$stage
+            break
+        fi
+    done
+    launch_ui_status HOLD "Native XCTest session did not establish readiness; last stage: $last_stage; no authentication or permission grant attempted."
 }
 
 launch_ui_attach() {

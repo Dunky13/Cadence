@@ -27,6 +27,17 @@ done
 case $FIXTURE_CASE in
     session-fail) exit 71 ;;
     protocol-missing) printf 'Missing private observer protocol paths: FAKE_SECRET=private\n'; exit 65 ;;
+    stage-before-ready|foreign-stage|unknown-stage|stage-only-ready)
+        case $FIXTURE_CASE in
+            stage-before-ready)
+                printf 'prefix CadenceObserverStage:%s:screenSessionStarted:EndCadenceObserver suffix\n' "$nonce"
+                printf 'CadenceObserverStage:%s:candidateVerified:EndCadenceObserver\n' "$nonce" ;;
+            foreign-stage) printf 'CadenceObserverStage:foreign:ready:EndCadenceObserver\n' ;;
+            unknown-stage) printf 'CadenceObserverStage:%s:EXCLUDED-private-value:EndCadenceObserver\n' "$nonce" ;;
+            stage-only-ready) printf 'CadenceObserverStage:%s:ready:EndCadenceObserver\n' "$nonce" ;;
+        esac
+        while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done
+        exit 72 ;;
     never-ready) while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 72 ;;
     wrong-ready) printf 'CadenceObserverReady:wrong-token:EndCadenceObserver\n'; while [[ ! -e $control/stop ]]; do /bin/sleep 0.01; done; exit 73 ;;
 esac
@@ -125,7 +136,7 @@ case $FIXTURE_CASE in
     *) jq -e '.status == "HOLD"' "$FIXTURE/evidence/status.json" >/dev/null ;;
 esac
 case $FIXTURE_CASE in
-    success|prefixed-ready|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable|collector-failure|collector-failure-enabled)
+    success|prefixed-ready|diagnostic-output-fail|diagnostic-missing-reader|session-fail|protocol-missing|never-ready|stage-before-ready|foreign-stage|unknown-stage|stage-only-ready|wrong-ready|permission-request|hung-session|kill-errors|ps-unavailable|collector-failure|collector-failure-enabled)
         grep -q '^session$' "$FIXTURE/calls"
         # Only private fixture/runner executable paths can be signaled.
         ! grep -Eq '1103|1104' "$FIXTURE/signals" ;;
@@ -134,7 +145,7 @@ esac
 # Verified teardown retains the actual reaped test exit and cannot qualify the
 # product. Missing/failing diagnostics never change original result or status.
 case $FIXTURE_CASE in
-    success|prefixed-ready|session-fail|protocol-missing|never-ready|wrong-ready|permission-request|hung-session|collector-failure|collector-failure-enabled)
+    success|prefixed-ready|session-fail|protocol-missing|never-ready|stage-before-ready|foreign-stage|unknown-stage|stage-only-ready|wrong-ready|permission-request|hung-session|collector-failure|collector-failure-enabled)
         jq -e --argjson code "$observer_test_result" '.client_exit == $code and .status == "HOLD" and .cause == "UNKNOWN" and
             .runtime_acceptance == false and .authority_established == false and .causality_established == false' \
             "$FIXTURE/evidence/bootstrap.json" >/dev/null ;;
@@ -147,9 +158,20 @@ if [[ $FIXTURE_CASE == protocol-missing ]]; then
     jq -e '.signature_flags.missing_private_protocol_variables == true' "$FIXTURE/evidence/bootstrap.json" >/dev/null
     ! grep -Eq 'FAKE_SECRET|private$' "$FIXTURE/evidence/bootstrap.json"
 fi
+case $FIXTURE_CASE in
+    stage-before-ready) expected_stage=screenSessionStarted ;;
+    stage-only-ready) expected_stage=ready ;;
+    foreign-stage|unknown-stage) expected_stage=unavailable ;;
+    *) expected_stage='' ;;
+esac
+if [[ -n $expected_stage ]]; then
+    [[ $observer_ready == false && $observer_test_result == 72 ]]
+    jq -e --arg stage "$expected_stage" '.status == "HOLD" and (.reason | contains("last stage: " + $stage + ";"))' "$FIXTURE/evidence/preflight.json" >/dev/null
+    ! grep -q EXCLUDED "$FIXTURE/evidence/preflight.json"
+fi
 DRIVER
 cases=0
-for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled missing-verifier prefixed-ready success; do
+for scenario in disabled local wrong-os wrong-xcode no-gui auth-required status-fail missing-binding missing-build session-fail protocol-missing never-ready stage-before-ready foreign-stage unknown-stage stage-only-ready wrong-ready permission-request hung-session kill-errors ps-unavailable diagnostic-output-fail diagnostic-missing-reader collector-failure collector-failure-enabled missing-verifier prefixed-ready success; do
     fixture="$work/$scenario"
     mkdir -p "$fixture/Cadence.app" "$fixture/scratch" "$fixture/build/Build/Products"
     : > "$fixture/calls"

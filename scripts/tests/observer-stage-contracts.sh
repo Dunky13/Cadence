@@ -8,6 +8,7 @@ cat > "$work/stage.swift" <<'SWIFT'
 import Foundation
 struct Harness {
     let evidence: URL?
+    var observationID: String? = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
 SWIFT
 awk '
     /^    enum BootstrapStage:/ || /^    struct BootstrapProgress:/ ||
@@ -46,7 +47,15 @@ try Harness(evidence: URL(fileURLWithPath: CommandLine.arguments[1])).run()
 let missing = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("missing-output")
 precondition(!FileManager.default.fileExists(atPath: missing.path))
 Harness(evidence: missing).missingOutput()
+Harness(evidence: missing, observationID: nil).missingOutput()
+Harness(evidence: missing, observationID: "EXCLUDED invalid nonce").missingOutput()
 precondition(!FileManager.default.fileExists(atPath: missing.path))
 SWIFT
 swiftc "$work/stage.swift" -o "$work/stage"
-"$work/stage" "$work"
+"$work/stage" "$work" > "$work/stdout"
+[[ $(grep -c '^CadenceObserverStage:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA:' "$work/stdout") == 10 ]]
+for stage in protocolPathsReceived candidateCheckStarted candidateVerified screenSessionStarted screenSessionReady ownerPreflightStarted ownerPreflightReady ready; do
+    grep -qx "CadenceObserverStage:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA:$stage:EndCadenceObserver" "$work/stdout"
+done
+if grep -q EXCLUDED "$work/stdout"; then exit 1; fi
+grep '^Observer stage:' "$work/stdout"

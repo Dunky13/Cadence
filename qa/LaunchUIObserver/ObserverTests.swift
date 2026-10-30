@@ -126,6 +126,12 @@ final class ObserverTests: XCTestCase {
         // Fixed vocabulary only. Failure of this optional diagnostic must not
         // change controller readiness, assertions, or the startup outcome.
         guard let ordinal = BootstrapStage.allCases.firstIndex(of: stage) else { return }
+        // An interrupted xcresult may never finalize its attachments. Keep only
+        // a nonce-bound, fixed-vocabulary stage in the private stdout protocol.
+        if let observationID, UUID(uuidString: observationID) != nil {
+            let frame = "\nCadenceObserverStage:\(observationID):\(stage.rawValue):EndCadenceObserver\n"
+            try? FileHandle.standardOutput.write(contentsOf: Data(frame.utf8))
+        }
         try? write(BootstrapProgress(stage: stage), to: evidence.appendingPathComponent("stage-\(ordinal).json"))
     }
 

@@ -75,9 +75,11 @@ func superviseLauncher(_ control: String) throws -> Int32 {
             return status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
         }
         guard result == 0 || (result < 0 && errno == EINTR) else { throw LauncherFailure.unavailable }
-        var received: Int32 = 0
-        guard sigwait(&signals, &received) == 0 else { throw LauncherFailure.unavailable }
-        if received != SIGCHLD { return 128 + received }
+        // Process-directed SIGCHLD need not wake this thread's sigwait.
+        // Recheck the authoritative child status instead of waiting
+        // indefinitely with a zombie child.
+        if let status = cancelled() { return status }
+        usleep(10_000)
     }
 }
 

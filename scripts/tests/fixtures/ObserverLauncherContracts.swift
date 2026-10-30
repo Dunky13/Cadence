@@ -63,7 +63,7 @@ struct ObserverLauncherContracts {
         if let range = mutated.range(of: Data("--args".utf8)) { mutated[range.lowerBound] = 0 }
         try check(!LauncherArguments.matches(mutated, expected))
 
-        for mode in ["TERM", "INT", "HUP", "KILL", "stop-product"] {
+        for mode in ["child-exit", "TERM", "INT", "HUP", "KILL", "stop-product"] {
             let control = workspace.appendingPathComponent(mode)
             try FileManager.default.createDirectory(at: control, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             let app = control.appendingPathComponent("Cadence.app")
@@ -128,7 +128,20 @@ struct ObserverLauncherContracts {
             let wrongNonce = try run(helper, ["verify", control.path, String(supervisor.processIdentifier), String(child)])
             try check(wrongNonce.0 != 0 && wrongNonce.1.isEmpty)
             try receiptData!.write(to: receiptURL)
-            if mode == "stop-product" {
+            if mode == "child-exit" {
+                // Let the guaranteed-invalid CLI target finish naturally. The
+                // supervisor must reap it without relying on SIGCHLD delivery.
+                let reader = output.fileHandleForReading.fileDescriptor
+                let flags = fcntl(reader, F_GETFL)
+                guard flags >= 0, fcntl(reader, F_SETFL, flags | O_NONBLOCK) == 0 else { throw ContractFailure.failed(cases) }
+                var bytes = [UInt8](repeating: 0, count: 65536)
+                while bytes.withUnsafeMutableBytes({ Darwin.read(reader, $0.baseAddress, $0.count) }) > 0 {}
+                let deadline = ProcessInfo.processInfo.systemUptime + 3
+                while supervisor.isRunning && ProcessInfo.processInfo.systemUptime < deadline { usleep(1000) }
+                try check(!supervisor.isRunning)
+                try check(supervisor.terminationReason == .exit && supervisor.terminationStatus == 1)
+                try check(kill(child, 0) == -1 && errno == ESRCH)
+            } else if mode == "stop-product" {
                 kill(supervisor.processIdentifier, SIGSTOP)
                 var env = ProcessInfo.processInfo.environment
                 env["OBSERVER_SCRIPT"] = adapter; env["OWNED_SUPERVISOR"] = String(supervisor.processIdentifier); env["VERIFIER"] = helper

@@ -532,6 +532,71 @@ repeated for this one-field profile correction; retained `23946da` results remai
 separate. A new exact-candidate XHigh Standards/Spec pass is required before push.
 Actual native Open, required PNG, finalized export and hosted CI remain HOLD.
 
+## Verified ARM Open and supervisor child-exit failure
+
+[Run 41127194059](https://github.com/Dunky13/Cadence/actions/runs/41127194059)
+on `710a1c4` fails both native jobs and `ci-required`; packaging is skipped.
+The signed candidate's direct Sol 6.1 XHigh Standards/Spec validation found no
+source findings, independently passed 298 focused contracts plus 26 supplemental
+checks per revision, and approved the exact push. Source review did not establish
+native acceptance.
+
+Both new consumer archives match GitHub metadata:
+
+- arm64: `5d79dabca72bafd291c69d0008153f551bf3983d64267650a047f0aeeffb081c`.
+- Intel: `df4a5377c1644cdf30cfb17309f850c6856ed9450b09b7a4043455c43884f40e`.
+
+ARM now records `verified-normal-open` with the exact binding nonce. The native
+test, cleanup, collection and bridge all exit zero. Its diagnostic after the
+startup timeout reports a PNG recognized by sips, no remaining owned product,
+and a zombie system launcher. The PNG's creation time and pixels were not
+retained, so rendering within the original deadline and visual acceptance remain
+HOLD. The optional read-only screenshot observation remains unavailable; this is
+separate from the authoritative controller and required product PNG.
+
+A native local reproduction using only nonexistent app targets leaves the
+supervisor alive with its exited child a zombie in all three trials. A sample
+of the exact owned supervisor shows its main thread blocked in sigwait. The
+existing native launcher tests exercised held children and cancellation, but
+not an ordinary child exit. A new production-helper regression releases the
+invalid-target CLI's output back-pressure and requires prompt exit, exact child
+status and reaping. It fails against `710a1c4` and passes after the repair.
+
+The supervisor now repeatedly checks waitpid(WNOHANG), retaining the existing
+pending-signal/stop handling and a bounded ten-millisecond interval instead of
+depending on process-directed SIGCHLD waking that thread. It mirrors the child
+status and reaps normally. No launcher arguments, live custody checks, 45-second
+supervisor safety alarm, public trust gate or thirty-second startup loop changes.
+The native launcher contracts now pass 93 cases, including natural exit,
+TERM/INT/HUP/KILL, owned outer teardown and foreign-process exclusion. No local
+app or UI was launched.
+
+Intel fails before readiness on this run, with test exit 143 after owned stop
+and incomplete attachment export. It does not reach the product launch. The
+retained bootstrap flags do not establish its last initialization phase; the
+previous process-query failure is a different observed boundary. Existing Apple
+CloudKit retries recover before this failure. No authentication or permission
+grant is attempted.
+
+Fixed-vocabulary bootstrap stages now also use nonce-bound stdout frames. On
+readiness failure the parent retains only the highest known stage, or
+unavailable, in its existing HOLD reason, even if xcresult cannot finalize.
+Foreign nonces and unknown stage values remain excluded. A ready stage alone
+never satisfies the separate exact Ready handshake. The existing eight stage
+attachments, permissions, readiness deadline, cleanup and upload allowlist are
+unchanged. Stage-output and four synthetic readiness cases cover this diagnostic
+boundary; lifecycle contracts now pass 79 cases. Intel's native root cause and
+both exact-head product outcomes remain HOLD pending new hosted evidence.
+
+The full local `scripts/ci.sh` passes on the repair: 59 Swift tests with real
+launchd integration, native arm64 app build, sandbox-preserving QA compilation,
+all workflow/signing/recovery/publication contracts, 93 launcher, 79 lifecycle,
+63 first-open, 71 filtering/privacy and the stage/protocol/export checks. Final
+native launcher and stage/static checks pass again after strengthening the
+natural-exit test to require the child PID to be absent, excluding zombies.
+No local native UI or public product execution is claimed. Fresh XHigh review
+and both hosted product outcomes are required before acceptance.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,
