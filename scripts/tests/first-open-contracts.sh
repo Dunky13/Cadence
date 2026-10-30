@@ -17,7 +17,10 @@ struct XCUIElementSnapshot {
     let children: [XCUIElementSnapshot]
 }
 struct XCUIElement {
-    enum ElementType: UInt { case window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }
+    enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox, menuBar }
+    var elementType: ElementType {
+        scenario == "dialog-surface" ? .dialog : (scenario == "alert-surface" ? .alert : (scenario == "sheet-surface" ? .sheet : .window))
+    }
     var isEnabled: Bool { scenario != "disabled-button" }
     func snapshot() throws -> XCUIElementSnapshot {
         snapshots += 1
@@ -41,11 +44,14 @@ struct Query {
 struct XCUIApplication {
     init(url: URL) {}
     struct Windows {
+        var windowOnly = false
         var allElementsBoundByIndex: [XCUIElement] {
-            Array(repeating: XCUIElement(), count: scenario == "multiple-windows" ? 2 : 1)
+            if windowOnly && XCUIElement().elementType != .window { return [] }
+            return Array(repeating: XCUIElement(), count: scenario == "missing-surface" ? 0 : (scenario == "multiple-windows" ? 2 : (scenario == "too-many-children" ? 65 : 1)))
         }
     }
-    var windows: Windows { Windows() }
+    func children(matching: XCUIElement.ElementType) -> Windows { precondition(matching == .any); return Windows() }
+    var windows: Windows { Windows(windowOnly: true) }
 }
 struct NSRunningApplication {
     init?(processIdentifier: Int32) {}
@@ -62,7 +68,7 @@ struct Harness {
 SWIFT
 awk '
     /^    struct (Binding|Launch|OwnedProcess|Owner|Node)[: ]/ ||
-    /^    private func (safeTree|permissionRequest|editableContent|normalOpenConfirmation|openNormalConfirmation)\(/ {
+    /^    private func (systemSurfaces|safeTree|permissionRequest|editableContent|normalOpenConfirmation|openNormalConfirmation)\(/ {
         if ($0 ~ /} *$/) { print; next }
         copy=1
     }
@@ -94,9 +100,10 @@ cat >> "$work/controller.swift" <<'SWIFT'
     private func write<T: Encodable>(_ value: T, to url: URL) throws { try JSONEncoder().encode(value).write(to: url) }
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
-        let rejected = ["spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
-        let noAction = ["disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
-        for name in ["normal"] + rejected + noAction {
+        let accepted = ["normal", "dialog-surface", "alert-surface", "sheet-surface"]
+        let rejected = ["too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
+        let noAction = ["missing-surface", "disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
+        for name in accepted + rejected + noAction {
             scenario = name; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false
             // Model capture finishing after the parent has requested teardown.
             if name == "stop-during-capture" { requestedStop = true }
@@ -104,12 +111,18 @@ cat >> "$work/controller.swift" <<'SWIFT'
                 try openNormalConfirmation(binding, Launch(launcherPID: 900))
                 precondition(!rejected.contains(name), "Unsafe state did not fail: \(name)")
                 try openNormalConfirmation(binding, Launch(launcherPID: 900))
-                precondition(clicks == (name == "normal" ? 1 : 0), "Unexpected/repeated UI action: \(name)")
+                precondition(clicks == (accepted.contains(name) ? 1 : 0), "Unexpected/repeated UI action: \(name)")
             } catch {
                 precondition(rejected.contains(name) && clicks == 0, "Unexpected error or unsafe action: \(name)")
             }
         }
-        print("First-open controller: \(1 + rejected.count + noAction.count) inert exact-production contracts passed; no actual UI action.")
+        scenario = "missing-surface"; normalOpenAttempted = false; clicks = 0; requestedStop = false
+        try openNormalConfirmation(binding, Launch(launcherPID: 900))
+        precondition(clicks == 0 && !normalOpenAttempted)
+        scenario = "dialog-surface"
+        try openNormalConfirmation(binding, Launch(launcherPID: 900))
+        precondition(clicks == 1 && normalOpenAttempted, "Late accessibility surface never retried")
+        print("First-open controller: \(accepted.count + rejected.count + noAction.count + 1) inert exact-production contracts passed; no actual UI action.")
     }
 }
 @main struct Main {

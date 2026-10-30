@@ -254,33 +254,88 @@ stop guards. Both independent re-reviews report no further findings at tree
 06dae2fece2afe5a1e5734fab378372b91f5d47e. The subsequent process-broker
 increment and its separate reviews are recorded above.
 
+## Refreshed failure at the certified-launcher head
+
+[Run 41101077067](https://github.com/Dunky13/Cadence/actions/runs/41101077067)
+on `4a43e86e2d9336698d0916867f7c51b1604f19a1` fails both native jobs.
+Both reach readiness, enumerate the unique stopped translocated product, and
+complete the certified launcher command and executable queries. This verifies
+that the earlier sandbox/framing/launcher-argument failures are superseded at
+this head. The current rejection is `UnknownFirstOpenHOLD`, immediately after
+the CoreServicesUIAgent window enumeration and before any window snapshot or
+Open action. Both products remain stopped; neither produces the required PNG.
+The arm64 ticket connection loss recovers within the existing exact retry
+policy, so it is not that job's terminal failure. Signing, notarization and
+publication succeeded in the historical main run; installation acceptance did
+not. No new distribution run was started for this repair.
+
+All four downloaded archive SHA-256 values match GitHub artifact metadata.
+Both decrypted client fingerprints match the retained bootstrap evidence:
+
+| Runner | Bytes | SHA-256 |
+| --- | ---: | --- |
+| arm64 | 29665 | `8b2d37c5504fc7f14997fc65be8165bad961338b2939b08a4d8cd2d930e51613` |
+| Intel | 47980 | `5d41e48765a694441b0ee03a278e1b62b370204afa1c27aa5a713e53bcde0b43` |
+
+The source queried only XCTest windows and rejected an empty result even while
+the system owner was becoming visible. XCTest has distinct window, dialog,
+alert and sheet element types. The candidate queries top-level children once,
+selecting all four surface types consistently for preflight, evidence and the
+controller. Nested dialogs remain inside their parent surface, avoiding duplicate
+counts. The controller leaves Open unattempted when no accessibility surface is
+available yet, using only the existing samples and thirty-second deadline.
+Multiple surfaces, unknown text, warnings, editable content, incomplete trees,
+owner changes, competing products and cancellation still prevent Open.
+The exact owner/product/custody/signature/argument checks are retained.
+Apple documents the separate [dialog query](https://developer.apple.com/documentation/xcuiautomation/xcuielementtypequeryprovider/dialogs)
+and [NSAlert modal dialog/sheet behavior](https://developer.apple.com/documentation/appkit/nsalert).
+The hosted logs do not retain the missing root's element types; whether the
+rejection is a distinct dialog type or a transient absent surface remains an
+inference pending the repaired-head run, not established runtime acceptance.
+
+The old controller fails the new exact-production inert regression on a dialog
+surface. The repaired suite covers all four types, unavailable-then-visible
+surfaces, bounds and all previous refusal cases. Export contracts additionally
+reproduce a diagnostic defect: xcresult attachment order can cause a generic
+unwind HOLD to overwrite the precise error. The collector now preserves the
+precise HOLD in either order; any HOLD still dominates success.
+
+A disposable local native alert probe compiled but did not enter its test method.
+Its owned runner and xcodebuild were stopped without granting permission or
+changing settings. It provides no local native UI proof. Inert contracts and
+build-for-testing must not be presented as native first-open acceptance.
+
+## Local checks for the surface-discovery candidate
+
+The complete `scripts/ci.sh` passes on arm64/macOS 27.0.1/Xcode 27.1:
+59 Swift tests with real launchd integration, the native app build, QA
+build-for-testing with its sandbox verified, ShellCheck/Bash/actionlint,
+and every workflow/signing/recovery/publication contract. Focused candidate
+coverage includes 30 inert first-open controller cases, 22 capture cases and
+19 export cases. The existing 79 native launcher contracts, 26 broker cases,
+50 release-selection cases and 108 publication cases also pass. The new dialog
+regression fails against the old controller; the precise-HOLD export regression
+fails against the old collector. These local checks do not establish the
+quarantined hosted installation or normal Open outcome.
+
 ## Remaining gates and cleanup
 
-Readiness, framing, owned-product metadata and safe observation export are now
-verified on both hosted architectures. The mutable launcher-argument display
-still blocks startup at 57bc97b. The certified-initial-argument supervisor needs
-hosted verification of exact launcher custody, actual normal-Open matching and
-startup. The previously approved encrypted capture remains active with the
-same protected one-time key until repair verification; remove it before final
-acceptance.
-
-Repaired-head hosted arm64 and Intel readiness, actual dialog matching, native
-startup and finalized result/attachment export remain required. Missing UI
-images are optional telemetry; unknown dialogs, controller failure and enabled
-collection failure cannot qualify a startup. If checks fail, diagnose and repair
-in this same PR without weakening the gate. ci-required correctly fails when
-native checks fail and packaging is skipped.
+The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,
+then hosted arm64 and Intel verification of the same quarantined public
+installation, exact normal Open action, demo PNG, final evidence export and
+`ci-required`. These are HOLD until observed on the exact repaired head. If the
+run fails, continue diagnosis and repair in this PR without weakening its gates.
 
 The temporary encrypted-log helper, public certificate, CI flag and uploader
-are currently restored for the later observation diagnosis and must be removed
-before final acceptance. The protected one-time key, private logs and task-owned
-encrypted remote artifacts remain only until repair/evidence closure, then must
-be deleted. Keep safe fingerprints and sanitized failure summaries. Local
-temporary builds/test scratch must also be removed before final handoff;
-ignored validation logs and the standalone offline HTML remain local.
+remain only for closure of the current observation failure. Remove them before
+final acceptance. The pre-existing protected one-time key and private evidence
+are retained until repair/evidence closure; they are outside Git. No plaintext,
+private key or machine-local evidence path belongs in committed content.
+Task-owned disposable builds and probes are removed after checks/review;
+ignored validation logs and the offline HTML handoff remain local evidence.
 
-No merge, Apple submission, public release or deployment was performed. The
-schedule change is not live until the PR is merged. The authorized implementation
-endpoint is a signed, pushed, reviewed PR; merge needs the user's separate
-approval after required checks pass. To inspect checks from a repository checkout:
-`gh pr checks 11 --repo Dunky13/Cadence`.
+No merge, Apple submission, public release or deployment is authorized or
+performed. The daily change-aware scheduling policy is already implemented and
+covered by the release-selection contracts, but is not live until merge.
+The endpoint is a signed, DCO-signed, pushed update of PR #11. Inspect checks
+from a repository checkout with `gh pr checks 11 --repo Dunky13/Cadence`.

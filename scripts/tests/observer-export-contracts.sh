@@ -66,4 +66,14 @@ new_case; printf 'retain\n' > "$fixture/evidence/session-stage.json"; invoke
 new_case; mutate '.[0].attachments += [(.[0].attachments[2] | .exportedFileName="hold.txt" | .suggestedHumanReadableName |= sub("DDDDDDDD";"FFFFFFFF"))]'
 printf 'HOLD: synthetic failure\n' > "$fixture/export/hold.txt"; invoke; [[ $result == 0 ]]
 grep -qx 'HOLD: synthetic failure' "$fixture/evidence/session.txt"
+# A precise error and the unwind fallback may be exported in either order.
+for order in forward reverse; do
+    new_case
+    printf 'HOLD: UnknownFirstOpenHOLD; normal Open attempted=false; no permission grant.\n' > "$fixture/export/session.txt"
+    printf 'HOLD: native observation did not complete; normal Open attempted=false; no permission grant.\n' > "$fixture/export/fallback.txt"
+    mutate '.[0].attachments += [(.[0].attachments[2] | .exportedFileName="fallback.txt" | .suggestedHumanReadableName |= sub("DDDDDDDD";"FFFFFFFF"))]'
+    if [[ $order == reverse ]]; then mutate '.[0].attachments |= reverse'; fi
+    invoke; [[ $result == 0 ]]
+    grep -qx 'HOLD: UnknownFirstOpenHOLD; normal Open attempted=false; no permission grant.' "$fixture/evidence/session.txt"
+done
 printf '%s observer export contracts passed; unrelated/private artifacts excluded.\n' "$cases"

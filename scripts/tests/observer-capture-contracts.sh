@@ -17,8 +17,9 @@ struct XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] = []
 }
 struct XCUIElement {
-    enum ElementType: UInt { case window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }
+    enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }
     let owner: Int32
+    var elementType: ElementType { scenario == "dialog-surface" ? .dialog : .window }
     func snapshot() throws -> XCUIElementSnapshot {
         if scenario == "query-throws" && owner == 101 { throw NSError(domain: "SyntheticQueryError", code: 1) }
         var tree = XCUIElementSnapshot(elementType: .window)
@@ -31,7 +32,8 @@ struct XCUIElement {
 struct XCUIApplication {
     let url: URL
     struct Windows { let allElementsBoundByIndex: [XCUIElement] }
-    var windows: Windows {
+    func children(matching: XCUIElement.ElementType) -> Windows {
+        precondition(matching == .any)
         let owner: Int32 = url.lastPathComponent == "Owner101.app" ? 101 : 100
         if scenario == "missing-owner" && owner == 101 { return Windows(allElementsBoundByIndex: []) }
         return Windows(allElementsBoundByIndex: Array(repeating: XCUIElement(owner: owner), count: scenario == "too-many-windows" ? 9 : 1))
@@ -52,7 +54,7 @@ struct Harness {
 SWIFT
 awk '
     /^    struct (Binding|Launch|OwnedProcess|Owner|Node|Window|CaptureResult|ObservationProgress|Observation)[: ]/ ||
-    /^    private func (ownedProcesses|safeTree|permissionRequest|editableContent|capture)\(/ {
+    /^    private func (systemSurfaces|ownedProcesses|safeTree|permissionRequest|editableContent|capture)\(/ {
         if ($0 ~ /} *$/) { print; next }
         copy=1
     }
@@ -94,7 +96,7 @@ cat >> "$work/capture.swift" <<'SWIFT'
         let failures = ["enumeration-failure", "argument-failure", "state-failure", "empty-command", "empty-state", "system-query-failure", "truncated", "authority"]
         let partial = ["too-many-owners", "too-many-windows", "missing-owner", "query-throws", "capture-unavailable", "editable-window", "changed-owner", "changed-owner-after-capture"]
         var cases = 0
-        for name in ["baseline", "verified-absence"] + partial + failures {
+        for name in ["baseline", "dialog-surface", "verified-absence"] + partial + failures {
             scenario = name
             ownerLookups = [:]
             do {

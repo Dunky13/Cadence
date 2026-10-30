@@ -95,7 +95,12 @@ for my $test (@$manifest) {
         # The error path can retain both a generic and a precise HOLD. Never
         # choose a successful session if any retained session reports HOLD.
         if (exists $selected{$name}) {
-            if ($name eq 'session.txt' && $data =~ /^HOLD:/) { $selected{$name} = $data; }
+            if ($name eq 'session.txt' && $data =~ /^HOLD:/) {
+                # xcresult export order is not chronological. Prefer a precise
+                # failure over the defer's generic incomplete-session fallback.
+                if ($selected{$name} !~ /^HOLD:/ || $selected{$name} =~ /^HOLD: native observation did not complete;/ ||
+                    $data !~ /^HOLD: native observation did not complete;/) { $selected{$name} = $data; }
+            }
             elsif ($name eq 'session.txt' && $selected{$name} =~ /^HOLD:/) { next; }
             else { die "Duplicate observer attachment\n"; }
         } else { $selected{$name} = $data; }

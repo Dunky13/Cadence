@@ -231,6 +231,16 @@ final class ObserverTests: XCTestCase {
         }.sorted { $0.pid < $1.pid }
     }
 
+    private func systemSurfaces(_ proxy: XCUIApplication) throws -> [XCUIElement] {
+        // App-modal confirmations can be dialogs/alerts rather than windows.
+        // Query top-level children once, so a dialog inside a window is never
+        // counted twice. Its entire subtree still receives the same policy.
+        let children = proxy.children(matching: .any).allElementsBoundByIndex
+        guard children.count <= 64 else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
+        let surfaces: Set<XCUIElement.ElementType> = [.window, .dialog, .alert, .sheet]
+        return children.filter { surfaces.contains($0.elementType) }
+    }
+
     private func safeTree(_ snapshot: XCUIElementSnapshot, budget: inout Int, depth: Int = 0) -> Node {
         budget -= 1
         // Never retain values, editable text, placeholders, or identifiers.
@@ -313,7 +323,10 @@ final class ObserverTests: XCTestCase {
         guard owners.count == 1 else { return }
         let owner = owners[0]
         let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
-        let windows = proxy.windows.allElementsBoundByIndex
+        let windows = try systemSurfaces(proxy)
+        // A visible system owner can precede its accessibility surface. Leave
+        // Open unattempted and sample again within the existing startup bound.
+        guard !windows.isEmpty else { return }
         guard windows.count == 1 else { throw NSError(domain: "UnknownFirstOpenHOLD", code: 1) }
         let window = windows[0]
         var budget = 1024
@@ -389,7 +402,7 @@ final class ObserverTests: XCTestCase {
             }
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
             do {
-                let elements = proxy.windows.allElementsBoundByIndex
+                let elements = try systemSurfaces(proxy)
                 limited = limited || elements.count > 8
                 if elements.isEmpty { unavailable.append(owner) }
                 for (number, element) in elements.prefix(8).enumerated() {
@@ -476,7 +489,7 @@ final class ObserverTests: XCTestCase {
         guard preflightOwners.count <= 16 else { throw NSError(domain: "IncompleteSystemUIHOLD", code: 1) }
         for owner in preflightOwners {
             let proxy = XCUIApplication(url: URL(fileURLWithPath: owner.applicationPath))
-            let elements = proxy.windows.allElementsBoundByIndex
+            let elements = try systemSurfaces(proxy)
             if normalOpenAllowed && owner.bundleID == "com.apple.coreservices.uiagent" && !elements.isEmpty {
                 throw NSError(domain: "UnknownFirstOpenHOLD", code: 1)
             }
