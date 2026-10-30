@@ -58,12 +58,20 @@ cat >> "$work/policy.swift" <<'SWIFT'
             XCUIElementSnapshot(elementType: .staticText, label: $0, title: "", children: [])
         } + ["Open", "Cancel"].map { XCUIElementSnapshot(elementType: .button, label: $0, title: "", children: []) }
         check(normalOpenConfirmation(filtered(.dialog, "", "", normalChildren)), "Normal first-open confirmation rejected")
-        func withValue(_ kind: XCUIElement.ElementType, _ value: Any?, optedIn: Bool = true, label: String = "") -> Node {
+        func withValue(_ kind: XCUIElement.ElementType, _ value: Any?, optedIn: Bool = true, label: String = "", title: String = "") -> Node {
             var budget = 1024
-            return safeTree(XCUIElementSnapshot(elementType: kind, label: label, title: "", children: [], rawValue: value), budget: &budget, staticTextValues: optedIn)
+            return safeTree(XCUIElementSnapshot(elementType: kind, label: label, title: title, children: [], rawValue: value), budget: &budget, staticTextValues: optedIn)
         }
         valueReads = 0
         check(withValue(.staticText, "EXCLUDED generic static value", optedIn: false).staticText == nil && valueReads == 0, "Generic capture read a value")
+        let genericImage = withValue(.image, "EXCLUDED image value", optedIn: false, label: "EXCLUDED generic image label", title: "EXCLUDED generic image title")
+        check(genericImage.label.isEmpty && genericImage.title.isEmpty && genericImage.staticText == nil && valueReads == 0, "Generic image metadata privacy changed")
+        let scopedImage = withValue(.image, "EXCLUDED image value", label: "Unexpected image label", title: "authentication required")
+        check(scopedImage.label == "Unexpected image label" && scopedImage.title == "authentication required", "Verified image metadata was erased before validation")
+        check(scopedImage.staticText == nil && valueReads == 0, "Image value was read or retained")
+        check(permissionRequest(scopedImage), "Image authority text was ignored")
+        let longImage = withValue(.image, nil, label: String(repeating: "x", count: 2049))
+        check(longImage.truncated && longImage.label.count == 2048, "Image metadata truncation lost")
         let immutable = withValue(.staticText, normalPrompt)
         check(immutable.staticText == normalPrompt && !immutable.truncated && valueReads == 1, "Confirmation lost immutable text")
         let oldButtonNodes = normalChildren.suffix(2).map { filtered($0.elementType, $0.label) }

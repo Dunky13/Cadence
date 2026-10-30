@@ -41,6 +41,11 @@ struct XCUIElement {
                     if scenario == "native-root-title" { title = "Unknown warning" }
                     if scenario == "native-extra-button" { children.append(XCUIElementSnapshot(elementType: .button, label: "Open Anyway", title: "", children: [])) }
                 }
+                if type == .image {
+                    if scenario == "native-image-label" || (scenario == "native-image-label-changed" && snapshots > 1) { label = "Unexpected image label" }
+                    if scenario == "native-image-title" { title = "authentication required" }
+                    if scenario == "native-image-title-changed" && snapshots > 1 { title = "Changed image title" }
+                }
                 if type == .staticText, let text = value {
                     if scenario == "native-warning" { value = text + " Apple could not verify this app." }
                     if scenario == "native-other-agent" { value = text.replacingOccurrences(of: "CadenceReleaseVerification", with: "OtherAgent") }
@@ -151,7 +156,7 @@ cat >> "$work/controller.swift" <<'SWIFT'
     mutating func run() throws {
         let binding = Binding(bundleID: "dev.cadence.app", teamID: "ABC1234567", version: "0.2.0", build: "15", executableSHA256: "verified", copiedPath: "/copied/Cadence.app", snapshotPath: "/unique/startup.png", observationID: "unique")
         let accepted = ["native-profile", "value-only-text", "normal", "dialog-surface", "alert-surface", "sheet-surface"]
-        let rejected = ["native-missing-metadata", "native-wrong-time", "native-changed-metadata", "native-extra-query-button", "native-duplicate-open", "native-disabled-open", "native-changed-tree", "native-unknown-root", "native-root-title", "native-extra-button", "native-warning", "native-other-agent", "changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
+        let rejected = ["native-image-label", "native-image-title", "native-image-label-changed", "native-image-title-changed", "native-missing-metadata", "native-wrong-time", "native-changed-metadata", "native-extra-query-button", "native-duplicate-open", "native-disabled-open", "native-changed-tree", "native-unknown-root", "native-root-title", "native-extra-button", "native-warning", "native-other-agent", "changed-static-value", "non-string-static-value", "long-static-value", "static-value-warning", "diagnostic-write-failure", "too-many-children", "spoofed-launcher", "preexisting-prompt", "competing-cadence", "wrong-candidate", "process-query-error", "wrong-launcher", "multiple-windows", "warning", "duplicate-open", "disabled-button", "changed-owner", "invalid-owner-signature", "reused-product-pid", "changed-tree"]
         let noAction = ["missing-surface", "disabled", "no-product", "multiple-products", "running-product", "foreign-owner", "multiple-owners", "stop-before-controller", "stop-during-capture", "stop-during-final-query"]
         for name in accepted + rejected + noAction {
             scenario = name; noticeReads = 0; clicks = 0; snapshots = 0; processQueries = 0; normalOpenAttempted = false; requestedStop = false

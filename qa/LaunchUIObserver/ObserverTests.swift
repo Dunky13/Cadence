@@ -248,7 +248,9 @@ final class ObserverTests: XCTestCase {
         // Generic telemetry never reads values. Only the verified confirmation
         // caller opts into immutable static-text strings, never editable values.
         let readable: Set<XCUIElement.ElementType> = [.window, .dialog, .alert, .sheet, .button, .staticText]
-        let show = readable.contains(snapshot.elementType)
+        // In that same verified context, preserve image labels/titles so the
+        // empty-image profile and final equality validate actual metadata.
+        let show = readable.contains(snapshot.elementType) || (staticTextValues && snapshot.elementType == .image)
         var text: String?
         var invalidText = false
         if staticTextValues, snapshot.elementType == .staticText, let value = snapshot.value {

@@ -18,7 +18,7 @@ struct XCUIElementSnapshot {
     var value: Any? = nil
 }
 struct XCUIElement {
-    enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox }
+    enum ElementType: UInt { case any, window, dialog, alert, sheet, button, staticText, secureTextField, textField, textView, comboBox, image = 43 }
     let owner: Int32
     var elementType: ElementType { scenario == "dialog-surface" ? .dialog : .window }
     func snapshot() throws -> XCUIElementSnapshot {

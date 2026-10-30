@@ -459,11 +459,40 @@ Focused checks pass: 58 exact-production inert controller cases, 64 filtering/
 profile cases and 15 actual-filesystem metadata/format/cache/preservation cases
 against an owned inert directory. The latter use the exact production metadata
 reader and show the quarantine attribute is unchanged after reading, and that
-changed agent/timestamp values are freshly read. The full local `scripts/ci.sh` suite passes on arm64/macOS 27.0.1/Xcode 27.1:
+changed agent/timestamp values are freshly read. At the initial profile candidate `23946da`, the full local `scripts/ci.sh` suite
+passes on arm64/macOS 27.0.1/Xcode 27.1:
 59 Swift tests with real launchd integration, native app build, sandbox-preserving
 QA compile, static/workflow checks and all signing/recovery/publication contracts.
 Hosted Open, required native demo PNG and all aggregate/package gates remain
 HOLD until observed on the repaired head.
+
+## XHigh image-metadata finding and repair
+
+The direct Sol 6.1 XHigh review of `23946da` found no separate Standards issue,
+but held Spec for one P2: the empty-image classifier checked fields that the
+filter had already erased. Three supplemental raw-snapshot cases reached one
+inert Open click: an unexpected image label, an authentication title, and an
+image label changed between snapshots. The earlier negative test modified an
+already-filtered Node and did not cover that actual boundary. That tree
+was held before any push as an executable CI head or native Open action.
+
+The repair retains bounded image label/title metadata only in the already
+verified confirmation context, so classification and final equality inspect
+the actual snapshot fields. Generic telemetry still redacts those image fields;
+image values, pixels and identifiers remain unread. Unknown image text is
+rejected by the closed profile, authority text is refused, and a changed image
+label or title blocks the final action. The actual raw native image metadata
+was not present in earlier filtered artifacts, so repaired-head runtime checks
+must verify the enforced empty-image condition rather than infer it.
+
+The old filter fails the new raw-controller image-label regression. Focused
+rechecks pass: controller 62, filtering/privacy 69, capture 22, quarantine 15,
+export 25, attachment 27 and lifecycle 75, plus static checks and a sandbox-
+preserving QA build. Controller cases cover all three reported failures and
+the symmetric changed-title case. Generic image redaction, no image-value
+reads, authority detection and text truncation also have raw-snapshot coverage.
+The full expensive suite was not repeated after this narrow repair; its
+`23946da` evidence remains separate. A fresh XHigh review is required before push.
 
 ## Remaining gates and cleanup
 
