@@ -85,6 +85,8 @@ launch_ui_wait_client() {
     local state=''
     launch_ui_client_time_left || return 1
     while kill -0 "$observer_launcher" 2>/dev/null; do
+        # Cancellation must reach forced teardown promptly, not spend the budget.
+        [[ ${observer_cancelled:-false} != true ]] || return 1
         launch_ui_client_time_left || return 1
         state=$(ps -p "$observer_launcher" -o stat= 2>/dev/null) || {
             if ! kill -0 "$observer_launcher" 2>/dev/null; then return 0; fi
@@ -291,7 +293,8 @@ launch_ui_attach() {
     # Start once, before the unchanged thirty-iteration product loop. Natural
     # client finalization may use its remainder plus the existing five-second
     # shutdown grace, never a new or extended overall verification window.
-    observer_finalization_deadline=$(/usr/bin/perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.6f\n", clock_gettime(CLOCK_MONOTONIC) + 30 + 5') || return 1
+    observer_finalization_deadline=$(/usr/bin/perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.6f\n", clock_gettime(CLOCK_MONOTONIC) + 30 + 5') || observer_finalization_deadline=''
+    # An empty deadline fails closed at finalization; owned setup must still run.
     observer_product_supervisor=$1
     "${BASH_SOURCE[0]%/*}/observer-process-bridge.sh" "$observer_control" "$1" "$observer_id" "$$" \
         "$observer_launcher_verifier" \
@@ -340,6 +343,8 @@ launch_ui_finish() {
             :
         else normal_open_result=1; fi
     fi
+    # A cancelled run cannot qualify, even if its client had already finished.
+    if [[ ${observer_cancelled:-false} == true ]]; then observer_finalization_result=1; fi
     if [[ $cleanup_result == 0 && $collection_result == 0 && $normal_open_result == 0 && ${observer_finalization_result:-0} == 0 && ${observer_bridge_result:-0} == 0 && ${observer_ready:-false} == true && ${observer_test_result:-unavailable} == 0 &&
         -s $LAUNCH_UI_EVIDENCE_DIR/session.txt && -s $LAUNCH_UI_EVIDENCE_DIR/observation-0.json ]] &&
         grep -q '^Observed:' "$LAUNCH_UI_EVIDENCE_DIR/session.txt"; then

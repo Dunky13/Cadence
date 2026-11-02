@@ -753,10 +753,49 @@ XHigh Standards/Spec review must challenge the lifetime/budget change before pus
 Native natural finalization, safe Open proof/export and both complete hosted jobs,
 packaging and `ci-required` remain HOLD until observed on the reviewed repaired head.
 
+## Finalization review on 2 November 2026
+
+The Codex subscription has ended, so the Sol 6.1 XHigh review named in the
+preceding sections did not run for this increment. Independent Standards and Spec
+reviews used Claude Opus 5.5 instead, under the owner's current review policy. No
+cross-provider pass ran. Review found one blocking defect, a signal during evidence
+collection that still produced OBSERVED, which is repaired below.
+
+Repairs from those reviews:
+
+- Launch attachment no longer returns early if stamping the deadline fails. Owned
+  setup still runs. The empty deadline fails closed for a client that sent Done. A
+  client that exits naturally without Done never consults the budget, and its other
+  gates still apply.
+- A handled HUP, INT or TERM, in either the product loop or cleanup, now stops the
+  finalization wait instead of spending up to 35 seconds before forced teardown.
+- A signal handled before the qualification check now latches finalization failure
+  and reports HOLD, even if the client had already finished or evidence collection
+  was running. A signal after that check can leave OBSERVED in the status file, but
+  the verifier still exits non-zero.
+- The contract grew to 30 cases: 15 scenarios in both errexit modes. It now covers
+  expiry during polling, real HUP/INT/TERM delivery through the verifier's cleanup
+  traps, cancellation after completion and during collection, both zombie paths, an unchanged deadline and
+  client reaping before helper teardown. The earlier statement about the real clock
+  covers only the pre-stub budget probe; expiry during a wait uses the fixture edge.
+- Twelve local source mutations each fail the contract: deadline reset at Done, no
+  polling budget, no cancel check in the wait, no cancellation latch at qualification, no
+  finalization latch, no zombie check in the wait or teardown, no reap before helper
+  teardown, a restored early return on a failed stamp, the latch read before collection, and a no-op cleanup or
+  exit-phase trap.
+
+Accepted and unchanged:
+
+- A Done frame arriving after the five-iteration window is still force-terminated.
+- A slow product start leaves less finalization time, because the budget is shared.
+  Whether xcodebuild finalizes inside it is unknown until a hosted run shows it.
+- If teardown fails during preparation and `launch_ui_stop` runs again, the second
+  pass can record exit 127. This predates the increment, affects diagnostics only
+  and still fails closed.
+
 ## Remaining gates and cleanup
 
-The candidate requires independent Sol 6.1 XHigh Standards and Spec validation,
-then hosted arm64 and Intel verification of the same quarantined public
+The candidate requires independent Standards and Spec validation, then hosted arm64 and Intel verification of the same quarantined public
 installation, exact normal Open action, demo PNG, final evidence export and
 `ci-required`. These are HOLD until observed on the exact repaired head. If the
 run fails, continue diagnosis and repair in this PR without weakening its gates.

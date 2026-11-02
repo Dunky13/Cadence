@@ -17,9 +17,9 @@ cleanup() {
     trap - EXIT
     # Finish owned teardown if another handled signal arrives during diagnostics.
     # Preserve an existing failure; cancellation must still turn success into failure.
-    trap 'if [[ $result == 0 ]]; then result=129; fi' HUP
-    trap 'if [[ $result == 0 ]]; then result=130; fi' INT
-    trap 'if [[ $result == 0 ]]; then result=143; fi' TERM
+    trap 'if [[ $result == 0 ]]; then result=129; fi; observer_cancelled=true' HUP
+    trap 'if [[ $result == 0 ]]; then result=130; fi; observer_cancelled=true' INT
+    trap 'if [[ $result == 0 ]]; then result=143; fi; observer_cancelled=true' TERM
     if declare -F launch_ui_finish >/dev/null; then
         if ! launch_ui_finish "$result"; then
             printf 'UI observer qualification failed; inspect test, export and teardown status.\n' >&2
@@ -66,9 +66,9 @@ cleanup() {
     exit "$result"
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'observer_cancelled=true; exit 129' HUP
+trap 'observer_cancelled=true; exit 130' INT
+trap 'observer_cancelled=true; exit 143' TERM
 spctl --assess --type execute --verbose=4 "$app"
 launch_ui_prepare "$app" "$work" || printf 'UI observer preparation unavailable; ordinary launch proceeds.\n' >&2
 [[ ${observer_cleanup_failed:-false} != true ]] || exit 1
