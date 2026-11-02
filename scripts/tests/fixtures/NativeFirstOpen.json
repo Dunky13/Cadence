@@ -1,0 +1,52 @@
+{
+  "children": [
+    {
+      "children": [],
+      "label": "alert",
+      "title": "",
+      "truncated": false,
+      "type": 43
+    },
+    {
+      "children": [],
+      "label": "",
+      "staticText": "“Cadence” is an app downloaded from the Internet. Are you sure you want to open it?",
+      "title": "",
+      "truncated": false,
+      "type": 48
+    },
+    {
+      "children": [],
+      "label": "",
+      "staticText": "CadenceReleaseVerification downloaded this file today at 8:40 PM. Apple checked it for malicious software and none was detected.",
+      "title": "",
+      "truncated": false,
+      "type": 48
+    },
+    {
+      "children": [],
+      "label": "Help",
+      "title": "",
+      "truncated": false,
+      "type": 9
+    },
+    {
+      "children": [],
+      "label": "",
+      "title": "Cancel",
+      "truncated": false,
+      "type": 9
+    },
+    {
+      "children": [],
+      "label": "",
+      "title": "Open",
+      "truncated": false,
+      "type": 9
+    }
+  ],
+  "label": "alert",
+  "title": "",
+  "truncated": false,
+  "type": 8
+}

@@ -15,9 +15,11 @@ case $endpoint in
     repos/fixture/Cadence/branches/main) cat "$FIXTURE/main.json" ;;
     repos/fixture/Cadence/actions/artifacts\?*) cat "$FIXTURE/inventory.json" ;;
     repos/fixture/Cadence/actions/workflows/ci.yml/runs\?*) printf '{"workflow_runs":[{"id":100}]}\n' ;;
+    repos/fixture/Cadence/actions/workflows/release.yml/runs\?*) cat "$FIXTURE/release-runs.json" ;;
     repos/fixture/Cadence/actions/runs/100) cat "$FIXTURE/ci.json" ;;
     repos/fixture/Cadence/actions/runs/200) cat "$FIXTURE/owner.json" ;;
     repos/fixture/Cadence/actions/runs/100/jobs\?*) cat "$FIXTURE/jobs.json" ;;
+    repos/fixture/Cadence/actions/runs/200/jobs\?*) cat "$FIXTURE/prior-jobs.json" ;;
     repos/fixture/Cadence/actions/runs/100/artifacts\?*) cat "$FIXTURE/builds.json" ;;
     repos/fixture/Cadence/releases\?*) cat "$FIXTURE/releases.json" ;;
     *) printf 'Unexpected synthetic endpoint: %s\n' "$endpoint" >&2; exit 90 ;;
@@ -44,12 +46,15 @@ reset_case() {
     jq -n --arg sha "$source_sha" --arg digest "$digest" '[{artifacts:[{id:300,name:("Cadence-macOS-universal-"+$sha),expired:false,digest:$digest}]}]' > "$FIXTURE/builds.json"
     printf '[{"artifacts":[]}]\n' > "$FIXTURE/inventory.json"
     printf '[[]]\n' > "$FIXTURE/releases.json"
+    printf '[{"workflow_runs":[]}]\n' > "$FIXTURE/release-runs.json"
+    printf '[{"jobs":[{"name":"Sign or resume exact universal candidate / Resume exact candidate, Developer ID, Apple and installer gates","status":"completed","conclusion":"failure"}]}]\n' > "$FIXTURE/prior-jobs.json"
     printf '{"path":".github/workflows/release.yml","event":"schedule","head_branch":"main","run_number":14,"repository":{"full_name":"fixture/Cadence"},"head_repository":{"id":42}}\n' > "$FIXTURE/owner.json"
 }
 mutate() { jq "$2" "$FIXTURE/$1.json" > "$work/changed.json"; mv "$work/changed.json" "$FIXTURE/$1.json"; }
 invoke() {
     result=0
-    PATH="$work/bin:$PATH" GITHUB_REPOSITORY=fixture/Cadence GITHUB_REF=refs/heads/main GITHUB_EVENT_NAME=workflow_dispatch \
+    PATH="$work/bin:$PATH" GITHUB_REPOSITORY=fixture/Cadence GITHUB_REF=refs/heads/main GITHUB_EVENT_NAME="${FIXTURE_EVENT:-workflow_dispatch}" \
+        GITHUB_SHA="$source_sha" GITHUB_RUN_ID=201 GITHUB_RUN_NUMBER=15 \
         bash "$root/scripts/select-release-candidate.sh" > "$work/output" 2> "$work/error" || result=$?
 }
 check() { [[ $result == "$2" ]] || { cat "$work/error"; printf 'FAIL %s (exit %s)\n' "$1" "$result"; exit 1; }; cases=$((cases+1)); }
@@ -94,4 +99,32 @@ reset_case; checkpoint; mutate inventory '.[0].artifacts += [(.[0].artifacts[0] 
 grep -q 'checkpoint_id=399' "$work/output"
 reset_case; checkpoint; mutate inventory '.[0].artifacts[0].created_at=null'; invoke; check 'missing creation time cannot select by ID' 1
 reset_case; checkpoint; mutate owner '.run_number=null'; invoke; check 'missing producer order fails closed' 1
+prior_attempt() {
+    jq -n --arg sha "$source_sha" '[{workflow_runs:[{id:200,run_number:14,path:".github/workflows/release.yml",event:"schedule",head_branch:"main",head_sha:$sha,conclusion:"failure",repository:{full_name:"fixture/Cadence"},head_repository:{id:42}}]}]' > "$FIXTURE/release-runs.json"
+}
+for event in schedule workflow_run; do
+    export FIXTURE_EVENT=$event
+    reset_case; checkpoint; prior_attempt; invoke; check "$event unchanged failed attempt is a no-op" 0
+    grep -qx 'eligible=false' "$work/output"
+    if grep -q '^checkpoint_id=' "$work/output"; then exit 1; fi
+    for mutation in '.head_sha="cccccccccccccccccccccccccccccccccccccccc"' '.head_repository.id=7' '.path=".github/workflows/ci.yml"' '.id=201' '.run_number=16' '.conclusion="skipped"'; do
+        reset_case; checkpoint; prior_attempt
+        mutate release-runs ".[0].workflow_runs[0] |= ($mutation)"
+        invoke; check "$event ignores non-attempt: $mutation" 0
+        grep -qx 'eligible=true' "$work/output"
+    done
+    reset_case; checkpoint; prior_attempt
+    mutate release-runs '.[0].workflow_runs[0].conclusion="success"'
+    invoke; check "$event unchanged successful attempt is a no-op" 0
+    grep -qx 'eligible=false' "$work/output"
+    reset_case; checkpoint; prior_attempt
+    mutate prior-jobs '.[0].jobs[0].conclusion="skipped"'
+    invoke; check "$event preflight-only run must not suppress a later CI success" 0
+    grep -qx 'eligible=true' "$work/output"
+    reset_case; checkpoint; printf '{}\n' > "$FIXTURE/release-runs.json"
+    invoke; check "$event malformed run inventory fails closed" 1
+done
+unset FIXTURE_EVENT
+reset_case; checkpoint; prior_attempt; invoke; check 'explicit dispatch can retry unchanged candidate' 0
+grep -qx 'eligible=true' "$work/output"
 printf '%s release-selection contracts passed (synthetic only).\n' "$cases"

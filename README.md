@@ -23,7 +23,7 @@ Build a universal Apple Silicon/Intel installer from the repository root:
 
 Open `dist/packages/0.2.0-universal-local/Cadence-Installer-0.2.0-universal-local.dmg` and drag **Cadence.app** to **Applications**. Local packages are ad-hoc signed and not notarized. Updating the app preserves your scripts, schedules, enabled states, and logs.
 
-macOS-only CI tests both architectures and builds a verified universal installer. Successful trusted-main CI automatically promotes its exact artifact through Developer ID signing, app and DMG notarization, installed-app verification and immutable GitHub publication. The stable version comes from `Resources/Info.plist`; already-published versions are a no-op. Pending candidates continue automatically using retained bytes and Apple UUIDs. See [release instructions](docs/RELEASING.md) for credentials, recovery and qualification boundaries.
+macOS-only CI tests both architectures and builds a verified universal installer. Successful trusted-main CI automatically promotes its exact artifact through Developer ID signing, app and DMG notarization, installed-app verification and immutable GitHub publication. The stable version comes from `Resources/Info.plist`; already-published versions are a no-op. A daily check skips unchanged commits; intentional manual recovery reuses retained bytes and Apple UUIDs. See [release instructions](docs/RELEASING.md) for credentials, recovery and qualification boundaries.
 
 The app includes a copper waveform icon in Finder, the installer, and About. Its checked-in artwork and reproducible generator are described in the [icon instructions](docs/RELEASING.md#app-icon).
 
