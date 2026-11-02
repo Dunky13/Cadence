@@ -174,6 +174,10 @@ final class ObserverTests: XCTestCase {
                   let query = ["command=": "command", "comm=": "executable", "stat=": "state"][arguments[3]] {
             kind = query; pid = value
         } else { throw NSError(domain: "ProcessQueryUnavailable", code: 1) }
+        // Fixed values only: HOLD evidence names the failure, never process output.
+        func unavailable(_ failure: String) -> NSError {
+            NSError(domain: "ProcessQueryUnavailable", code: 1, userInfo: ["query": kind, "failure": failure])
+        }
         let requestID = UUID().uuidString
         let marker = "\nCadenceObserverQuery:\(observationID):\(requestID):\(kind):\(pid):EndCadenceObserver\n"
         try FileHandle.standardOutput.write(contentsOf: Data(marker.utf8))
@@ -185,20 +189,23 @@ final class ObserverTests: XCTestCase {
                 let attributes = try files.attributesOfItem(atPath: replyURL.path)
                 guard attributes[.type] as? FileAttributeType == .typeRegular,
                       let size = attributes[.size] as? NSNumber, size.intValue <= 1100000 else {
-                    throw NSError(domain: "ProcessQueryUnavailable", code: 1)
+                    throw unavailable("invalid")
                 }
-                let reply = try JSONDecoder().decode(ProcessReply.self, from: Data(contentsOf: replyURL))
+                guard let reply = try? JSONDecoder().decode(ProcessReply.self, from: Data(contentsOf: replyURL)) else {
+                    throw unavailable("invalid")
+                }
                 guard reply.schema == "cadence/process-query/v1", reply.observationID == observationID,
-                      reply.requestID == requestID, reply.kind == kind, reply.pid == pid, reply.ok,
+                      reply.requestID == requestID, reply.kind == kind, reply.pid == pid,
                       reply.output.utf8.count <= 1048576 else {
-                    throw NSError(domain: "ProcessQueryUnavailable", code: 1)
+                    throw unavailable("invalid")
                 }
+                guard reply.ok else { throw unavailable("rejected") }
                 guard !stopRequested else { throw ObserverCancellation.stopped }
                 return reply.output
             }
             Thread.sleep(forTimeInterval: 0.01)
         }
-        throw NSError(domain: "ProcessQueryUnavailable", code: 1)
+        throw unavailable("timeout")
     }
 
     private func ownedProcesses(_ binding: Binding) throws -> [OwnedProcess] {
@@ -553,7 +560,12 @@ final class ObserverTests: XCTestCase {
             if let evidence {
                 let known = ["CandidateIdentityMismatch", "CopiedCandidateIdentityMismatch", "UIAuthorityRequestHOLD", "IncompleteSystemUIHOLD", "ProcessQueryUnavailable", "SystemWindowQueryUnavailable", "InvalidLauncher", "UnknownFirstOpenHOLD"]
                 let domain = (error as NSError).domain
-                let reason = known.contains(domain) ? domain : "native-query-or-protocol-failure"
+                var reason = known.contains(domain) ? domain : "native-query-or-protocol-failure"
+                if domain == "ProcessQueryUnavailable",
+                   let query = (error as NSError).userInfo["query"] as? String,
+                   let failure = (error as NSError).userInfo["failure"] as? String {
+                    reason += "; query=\(query); failure=\(failure)"
+                }
                 try? text("HOLD: \(reason); normal Open attempted=\(normalOpenAttempted); no permission grant.\n", to: evidence.appendingPathComponent("session.txt"))
             }
             throw error

@@ -29,6 +29,16 @@ cat >> "$work/client.swift" <<'SWIFT'
             precondition(scenario == "stop", "Unexpected cancellation")
         } catch {
             precondition(scenario != "valid" && scenario != "stop", "Unexpected client failure")
+            let details = (error as NSError).userInfo
+            switch scenario {
+            case "timeout", "failure":
+                precondition(details["failure"] as? String == (scenario == "timeout" ? "timeout" : "rejected"), "Wrong failure class")
+                precondition(details["query"] as? String == "command", "Wrong query kind")
+            case "nonce", "request", "kind", "pid", "schema", "oversized", "malformed", "foreign-failure":
+                precondition(details["failure"] as? String == "invalid", "Wrong failure class")
+            default:
+                precondition(details["failure"] == nil, "Unexpected failure class")
+            }
         }
     }
 }
@@ -56,7 +66,8 @@ while (time < $deadline) {
     $reply->{kind} = 'state' if $scenario eq 'kind';
     $reply->{pid} = 801 if $scenario eq 'pid';
     $reply->{schema} = 'unknown' if $scenario eq 'schema';
-    $reply->{ok} = JSON::PP::false if $scenario eq 'failure';
+    $reply->{ok} = JSON::PP::false if $scenario eq 'failure' || $scenario eq 'foreign-failure';
+    $reply->{observationID} = 'foreign' if $scenario eq 'foreign-failure';
     $reply->{output} = 'x' x 1048577 if $scenario eq 'oversized';
     open(my $out, '>', "$control/pending") or die;
     print {$out} $scenario eq 'malformed' ? '{' : encode_json($reply);
@@ -67,7 +78,7 @@ while (time < $deadline) {
 die "Client did not request metadata\n";
 PERL
 cases=0
-for scenario in valid nonce request kind pid schema failure oversized malformed stop unknown timeout; do
+for scenario in valid nonce request kind pid schema failure foreign-failure oversized malformed stop unknown timeout; do
     control="$work/$scenario"
     mkdir "$control"
     : > "$control/client.log"

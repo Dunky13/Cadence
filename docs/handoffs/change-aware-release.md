@@ -793,6 +793,33 @@ Accepted and unchanged:
   pass can record exit 127. This predates the increment, affects diagnostics only
   and still fails closed.
 
+## Hosted result at 4dc0760 and process-query diagnostic
+
+[Run 41489488871](https://github.com/Dunky13/Cadence/actions/runs/41489488871)
+shows the finalization repair working on hosted runners, with one failure left.
+
+- **Intel passes the native job:** test 0, collection 0, Open evidence 0 and
+  finalization 0. `first-open.json` records `verified-normal-open`, and the inspected
+  PNG shows the expected demo screen. Its telemetry `status.json` still reads HOLD,
+  because no safe window tree and screenshot pair was retained. That telemetry
+  status is not the qualification gate.
+- **arm64 fails on a different cause:** test 65, collection 0, finalization 0, with
+  `HOLD: ProcessQueryUnavailable; normal Open attempted=false`. The product stayed
+  stopped at first open until the unchanged 30-second loop timed out, with no PNG.
+  An earlier ARM run reached Open on this same bridge source, so this is not a
+  deterministic failure of the bridge.
+- **Cause not established:** the old error did not separate a timeout from a rejected
+  or invalid reply, and the private client log is not retained. A slow relay or query
+  on a strained runner is only a hypothesis. No deadline was changed.
+
+The HOLD line now adds `query=<kind>; failure=<timeout|rejected|invalid>`, using fixed
+values only. All failures still throw and fail closed. Standards and Spec review by
+Claude Opus 5.5 found one blocking gap, malformed replies missing the class, now
+repaired. Contract cases cover each class, including `ok=false` with a foreign binding.
+The local queued QA build did not complete: one attempt failed after its build folder
+was removed while it ran, and the retry never left the queue. The changed Swift
+typechecks locally, and the hosted native jobs run the same build script.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Standards and Spec validation, then hosted arm64 and Intel verification of the same quarantined public
