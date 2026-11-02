@@ -820,6 +820,20 @@ The local queued QA build did not complete: one attempt failed after its build f
 was removed while it ran, and the retry never left the queue. The changed Swift
 typechecks locally, and the hosted native jobs run the same build script.
 
+## Hosted result at 89b7a23 and the aggregate gate
+
+[Run 41502995117](https://github.com/Dunky13/Cadence/actions/runs/41502995117)
+passes both native jobs and universal packaging. Both native jobs export
+`verified-normal-open` proof with test, collection, Open evidence and finalization
+exit 0. The arm64 process-query failure did not repeat, so the failure is intermittent
+and its cause is still unknown. The new diagnostic has not fired yet.
+
+`ci-required` was cancelled on both attempts after exactly 15 minutes, with no runner
+name, steps or logs. GitHub's status page showed Actions as operational, so why the
+assignment was lost is unknown. The job only compares two job results, so it now uses
+`ubuntu-latest`. Its name, which branch protection and the release scripts require,
+is unchanged. The native and packaging jobs stay on their macOS runners.
+
 ## Remaining gates and cleanup
 
 The candidate requires independent Standards and Spec validation, then hosted arm64 and Intel verification of the same quarantined public

@@ -120,7 +120,8 @@ jobs:
     name: ci-required
     needs: [native, universal]
     if: ${{ always() }}
-    runs-on: macos-15
+    # Only compares job results; twice lost its macOS runner assignment on PR #11.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       NATIVE_RESULT: ${{ needs.native.result }}
